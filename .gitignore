@@ -160,3 +160,4 @@ cython_debug/
 outputs/
 submission/
 checkpoints/
+data/

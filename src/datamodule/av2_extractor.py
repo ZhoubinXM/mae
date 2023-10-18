@@ -21,7 +21,7 @@ class Av2Extractor:
         radius: float = 150,
         save_path: Path = None,
         mode: str = "train",
-        ignore_type: List[int] = [5, 6, 7, 8, 9],
+        ignore_type: List[int] = [5, 6, 7, 8, 9],  #ignore category: static background construction riderless_bicycle unknow
         remove_outlier_actors: bool = True,
     ) -> None:
         self.save_path = save_path
