@@ -16,6 +16,7 @@ from .av2_data_utils import (
 
 
 class Av2ExtractorMultiAgent:
+
     def __init__(
         self,
         radius: float = 150,
@@ -48,35 +49,41 @@ class Av2ExtractorMultiAgent:
         df, am, scenario_id = load_av2_df(raw_path)
         city = df.city.values[0]
         agent_id = "AV"
-
+        # get AV pose
         local_df = df[df["track_id"] == agent_id].iloc
         origin = torch.tensor(
-            [local_df[49]["position_x"], local_df[49]["position_y"]], dtype=torch.float
-        )
+            [local_df[49]["position_x"], local_df[49]["position_y"]],
+            dtype=torch.float)
+        # heading is local coord relative to global coord
         theta = torch.tensor([local_df[49]["heading"]], dtype=torch.float)
-        rotate_mat = torch.tensor(
-            [
-                [torch.cos(theta), -torch.sin(theta)],
-                [torch.sin(theta), torch.cos(theta)],
-            ],
-        )
+        # rot matrix is local to global
+        rotate_mat = torch.tensor([
+            [torch.cos(theta), -torch.sin(theta)],
+            [torch.sin(theta), torch.cos(theta)],
+        ], )
 
         timestamps = list(np.sort(df["timestep"].unique()))
         cur_df = df[df["timestep"] == timestamps[49]]
         actor_ids = list(cur_df["track_id"].unique())
-        object_category = torch.from_numpy(cur_df["object_category"].values).float()
-        cur_pos = torch.from_numpy(cur_df[["position_x", "position_y"]].values).float()
+        object_category = torch.from_numpy(
+            cur_df["object_category"].values).float()
+        cur_pos = torch.from_numpy(cur_df[["position_x",
+                                           "position_y"]].values).float()
 
         scored_agents_mask = object_category > 1.5
-        out_of_range = np.linalg.norm(cur_pos - origin, axis=1) > self.radius
+        out_of_range = np.linalg.norm(
+            cur_pos - origin,
+            axis=1) > self.radius  # check agent is out of 150m relative AV
         out_of_range[scored_agents_mask] = False  # keep all scored agents
 
-        actor_ids = [aid for i, aid in enumerate(actor_ids) if not out_of_range[i]]
+        actor_ids = [
+            aid for i, aid in enumerate(actor_ids) if not out_of_range[i]
+        ]
         av_idx = actor_ids.index(agent_id)
         scored_agents_mask = scored_agents_mask[~out_of_range]
         num_nodes = len(actor_ids)
 
-        df = df[df["track_id"].isin(actor_ids)]
+        df = df[df["track_id"].isin(actor_ids)]  # get all predict agent
 
         # initialization
         x = torch.zeros(num_nodes, 110, 2, dtype=torch.float)
@@ -93,30 +100,32 @@ class Av2ExtractorMultiAgent:
             x_attr[node_idx, 0] = object_type
             x_attr[node_idx, 1] = actor_df["object_category"].values[0]
             x_attr[node_idx, 2] = OBJECT_TYPE_MAP_COMBINED[
-                actor_df["object_type"].values[0]
-            ]
+                actor_df["object_type"].values[0]]
             x_track_horizon[node_idx] = node_steps[-1] - node_steps[0]
 
             padding_mask[node_idx, node_steps] = False
             if padding_mask[node_idx, 49] or object_type in self.ignore_type:
                 padding_mask[node_idx, 50:] = True
 
+            # global coordinate
             pos_xy = torch.from_numpy(
                 np.stack(
-                    [actor_df["position_x"].values, actor_df["position_y"].values],
+                    [
+                        actor_df["position_x"].values,
+                        actor_df["position_y"].values
+                    ],
                     axis=-1,
-                )
-            ).float()
+                )).float()
             heading = torch.from_numpy(actor_df["heading"].values).float()
-            velocity = torch.from_numpy(
-                actor_df[["velocity_x", "velocity_y"]].values
-            ).float()
+            velocity = torch.from_numpy(actor_df[["velocity_x", "velocity_y"
+                                                  ]].values).float()
             velocity_norm = torch.norm(velocity, dim=1)
-
-            x[node_idx, node_steps, :2] = torch.matmul(pos_xy - origin, rotate_mat)
-            x_heading[node_idx, node_steps] = (heading - theta + np.pi) % (
-                2 * np.pi
-            ) - np.pi
+            # transform to AV coordinate
+            x[node_idx, node_steps, :2] = torch.matmul(pos_xy - origin,
+                                                       rotate_mat)
+            x_heading[
+                node_idx,
+                node_steps] = (heading - theta + np.pi) % (2 * np.pi) - np.pi
             x_velocity[node_idx, node_steps] = velocity_norm
 
         (
@@ -130,7 +139,8 @@ class Av2ExtractorMultiAgent:
 
         if self.remove_outlier_actors:
             lane_samples = lane_positions[:, ::1, :2].view(-1, 2)
-            nearest_dist = torch.cdist(x[:, 49, :2], lane_samples).min(dim=1).values
+            nearest_dist = torch.cdist(x[:, 49, :2],
+                                       lane_samples).min(dim=1).values
             valid_actor_mask = nearest_dist < 5
             valid_actor_mask[0] = True  # always keep av and scored agents
             valid_actor_mask[scored_agents_mask] = True
@@ -139,7 +149,9 @@ class Av2ExtractorMultiAgent:
             x_heading = x_heading[valid_actor_mask]
             x_velocity = x_velocity[valid_actor_mask]
             x_attr = x_attr[valid_actor_mask]
-            actor_ids = [aid for i, aid in enumerate(actor_ids) if valid_actor_mask[i]]
+            actor_ids = [
+                aid for i, aid in enumerate(actor_ids) if valid_actor_mask[i]
+            ]
             scored_agents_mask = scored_agents_mask[valid_actor_mask]
             padding_mask = padding_mask[valid_actor_mask]
             num_nodes = x.shape[0]
@@ -148,16 +160,20 @@ class Av2ExtractorMultiAgent:
         x_positions = x[:, :50, :2].clone()
         x_velocity_diff = x_velocity[:, :50].clone()
 
+        # get fut trajectory relative to current frame's position diff
         x[:, 50:] = torch.where(
-            (padding_mask[:, 49].unsqueeze(-1) | padding_mask[:, 50:]).unsqueeze(-1),
+            (padding_mask[:, 49].unsqueeze(-1)
+             | padding_mask[:, 50:]).unsqueeze(-1),
             torch.zeros(num_nodes, 60, 2),
             x[:, 50:] - x[:, 49].unsqueeze(-2),
         )
+        # get past trajectory position diff with himselves last frame
         x[:, 1:50] = torch.where(
             (padding_mask[:, :49] | padding_mask[:, 1:50]).unsqueeze(-1),
             torch.zeros(num_nodes, 49, 2),
             x[:, 1:50] - x[:, :49],
         )
+        ## first frame diff is zero.
         x[:, 0] = torch.zeros(num_nodes, 2)
 
         x_velocity_diff[:, 1:50] = torch.where(
@@ -174,10 +190,10 @@ class Av2ExtractorMultiAgent:
             "y": y,
             "x_attr": x_attr,
             "x_positions": x_positions,
-            "x_centers": x_ctrs,
-            "x_angles": x_heading,
-            "x_velocity": x_velocity,
-            "x_velocity_diff": x_velocity_diff,
+            "x_centers": x_ctrs,  # means distance with AV
+            "x_angles": x_heading,  # means heading diff with AV
+            "x_velocity": x_velocity,  # means absolutely diff with  AV
+            "x_velocity_diff": x_velocity_diff,  # velocity diff with last frame
             "x_padding_mask": padding_mask,
             "x_scored": scored_agents_mask,
             "lane_positions": lane_positions,
@@ -212,7 +228,8 @@ class Av2ExtractorMultiAgent:
                 num_interp_pts=20,
             )
             lane_centerline = torch.from_numpy(lane_centerline[:, :2]).float()
-            lane_centerline = torch.matmul(lane_centerline - origin, rotate_mat)
+            lane_centerline = torch.matmul(lane_centerline - origin,
+                                           rotate_mat)
             is_intersection = am.lane_is_in_intersection(segment.id)
 
             lane_positions.append(lane_centerline)
@@ -220,9 +237,8 @@ class Av2ExtractorMultiAgent:
 
             # get lane attrs
             lane_type = LaneTypeMap[segment.lane_type]
-            attribute = torch.tensor(
-                [lane_type, lane_width, is_intersection], dtype=torch.float
-            )
+            attribute = torch.tensor([lane_type, lane_width, is_intersection],
+                                     dtype=torch.float)
             lane_attrs.append(attribute)
 
         lane_positions = torch.stack(lane_positions)
@@ -237,12 +253,10 @@ class Av2ExtractorMultiAgent:
         x_max, x_min = radius, -radius
         y_max, y_min = radius, -radius
 
-        padding_mask = (
-            (lane_positions[:, :, 0] > x_max)
-            | (lane_positions[:, :, 0] < x_min)
-            | (lane_positions[:, :, 1] > y_max)
-            | (lane_positions[:, :, 1] < y_min)
-        )
+        padding_mask = ((lane_positions[:, :, 0] > x_max)
+                        | (lane_positions[:, :, 0] < x_min)
+                        | (lane_positions[:, :, 1] > y_max)
+                        | (lane_positions[:, :, 1] < y_min))
 
         invalid_mask = padding_mask.all(dim=-1)
         lane_positions = lane_positions[~invalid_mask]
@@ -252,9 +266,9 @@ class Av2ExtractorMultiAgent:
         lanes_angle = lanes_angle[~invalid_mask]
         padding_mask = padding_mask[~invalid_mask]
 
-        lane_positions = torch.where(
-            padding_mask[..., None], torch.zeros_like(lane_positions), lane_positions
-        )
+        lane_positions = torch.where(padding_mask[..., None],
+                                     torch.zeros_like(lane_positions),
+                                     lane_positions)
 
         return (
             lane_positions,

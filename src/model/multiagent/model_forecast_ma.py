@@ -133,14 +133,14 @@ class ModelForecastMultiAgent(nn.Module):
         lane_feat = self.lane_embed(lane_normalized.view(-1, L, D).contiguous())
         lane_feat = lane_feat.view(B, M, -1)
 
-        # pos embed
+        # pos embed MLP, used to get global information
         x_centers = torch.cat([data["x_centers"], data["lane_centers"]], dim=1)
         angles = torch.cat([data["x_angles"][:, :, 49], data["lane_angles"]], dim=1)
         x_angles = torch.stack([torch.cos(angles), torch.sin(angles)], dim=-1)
         pos_feat = torch.cat([x_centers, x_angles], dim=-1)
         pos_embed = self.pos_embed(pos_feat)
 
-        # type embed
+        # type embed, learned embedding method
         actor_type_embed = self.actor_type_embed[data["x_attr"][..., 2].long()]
         lane_type_embed = self.lane_type_embed.repeat(B, M, 1)
         actor_feat += actor_type_embed
@@ -159,8 +159,10 @@ class ModelForecastMultiAgent(nn.Module):
             )
             pos_embed = torch.cat([pos_embed, self.cls_pos.repeat(B, 1, 1)], dim=1)
 
+        # feature and position embeding.
         x_encoder = x_encoder + pos_embed
-        for i, blk in enumerate(self.blocks):
+        # transformer block
+        for i, blk in enumerate(self.blocks): 
             x_encoder = blk(x_encoder, key_padding_mask=key_padding_mask)
         x_encoder = self.norm(x_encoder)
 

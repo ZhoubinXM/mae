@@ -56,14 +56,34 @@ def visualize_scenario(
     prediction: np.ndarray = None,
     timestep: int = 50,
     save_path: Path = None,
+    transform: bool = True,
 ) -> None:
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
 
+    rot_w2l, focal_obj_pos = None, None
+    if transform:
+        focal_track_id: str = scenario.focal_track_id
+        for track in scenario.tracks:
+            if track.track_id == focal_track_id:
+                for object_state in track.object_states:
+                    if object_state.timestep == timestep - 1:
+                        focal_obj_pos = object_state.position
+                        focal_obj_heading = object_state.heading
+                        rot_w2l = np.array([[
+                            np.cos(focal_obj_heading),
+                            -np.sin(focal_obj_heading)
+                        ],
+                                            [
+                                                np.sin(focal_obj_heading),
+                                                np.cos(focal_obj_heading)
+                                            ]])
+
     # Plot static map elements and actor tracks
-    _plot_static_map_elements(scenario_static_map)
-    cur_plot_bounds = _plot_actor_tracks(ax, scenario, timestep)
+    _plot_static_map_elements(scenario_static_map, focal_obj_pos, rot_w2l)
+    cur_plot_bounds = _plot_actor_tracks(ax, scenario, timestep, focal_obj_pos,
+                                         rot_w2l)
     plot_bounds = cur_plot_bounds
 
     if prediction is not None:
@@ -78,12 +98,10 @@ def visualize_scenario(
         )
 
     plt.axis("equal")
-    plt.xlim(
-        plot_bounds[0] - _PLOT_BOUNDS_BUFFER_W, plot_bounds[0] + _PLOT_BOUNDS_BUFFER_W
-    )
-    plt.ylim(
-        plot_bounds[1] - _PLOT_BOUNDS_BUFFER_H, plot_bounds[1] + _PLOT_BOUNDS_BUFFER_H
-    )
+    plt.xlim(plot_bounds[0] - _PLOT_BOUNDS_BUFFER_W,
+             plot_bounds[0] + _PLOT_BOUNDS_BUFFER_W)
+    plt.ylim(plot_bounds[1] - _PLOT_BOUNDS_BUFFER_H,
+             plot_bounds[1] + _PLOT_BOUNDS_BUFFER_H)
     plt.tight_layout()
 
     if save_path is not None:
@@ -92,9 +110,10 @@ def visualize_scenario(
         plt.show()
 
 
-def _plot_static_map_elements(
-    static_map: ArgoverseStaticMap, show_ped_xings: bool = False
-) -> None:
+def _plot_static_map_elements(static_map: ArgoverseStaticMap,
+                              origin=None,
+                              rot=None,
+                              show_ped_xings: bool = False) -> None:
     """Plot all static map elements associated with an Argoverse scenario.
 
     Args:
@@ -102,21 +121,27 @@ def _plot_static_map_elements(
         show_ped_xings: Configures whether pedestrian crossings should be plotted.
     """
     # Plot drivable areas
-    for drivable_area in static_map.vector_drivable_areas.values():
-        _plot_polygons([drivable_area.xyz], alpha=0.5, color=_DRIVABLE_AREA_COLOR)
+    # for drivable_area in static_map.vector_drivable_areas.values():
+    #     _plot_polygons([drivable_area.xyz], alpha=0.5, color=_DRIVABLE_AREA_COLOR)
 
     # Plot lane segments
     for lane_segment in static_map.vector_lane_segments.values():
         centerline = static_map.get_lane_segment_centerline(lane_segment.id)
-        _plot_polylines(
-            [centerline], line_width=2.0, color="#000000", alpha=0.2, style="--"
-        )
+        _plot_polylines([centerline],
+                        line_width=2.0,
+                        color="grey",
+                        alpha=0.2,
+                        style="--",
+                        origin=origin,
+                        rot=rot)
         _plot_polylines(
             [centerline],
             line_width=3,
-            color="white",
+            color="grey",
             endpoint=True,
             zorder=98,
+            origin=origin,
+            rot=rot,
         )
 
     # Plot pedestrian crossings
@@ -126,6 +151,8 @@ def _plot_static_map_elements(
                 [ped_xing.edge1.xyz, ped_xing.edge2.xyz],
                 alpha=1.0,
                 color=_LANE_SEGMENT_COLOR,
+                origin=origin,
+                rot=rot,
             )
 
 
@@ -133,6 +160,8 @@ def _plot_actor_tracks(
     ax: plt.Axes,
     scenario: ArgoverseScenario,
     timestep: int,
+    origin=None,
+    rot=None,
 ) -> Optional[_PlotBounds]:
     """Plot all actor tracks (up to a particular time step) associated with an Argoverse scenario.
 
@@ -149,38 +178,35 @@ def _plot_actor_tracks(
 
     for track in scenario.tracks:
         # Get timesteps for which actor data is valid
-        actor_timesteps: NDArrayInt = np.array(
-            [
-                object_state.timestep
-                for object_state in track.object_states
-                if object_state.timestep <= timestep
-            ]
-        )
+        actor_timesteps: NDArrayInt = np.array([
+            object_state.timestep for object_state in track.object_states
+            if object_state.timestep <= timestep
+        ])
         if actor_timesteps.shape[0] < 1 or actor_timesteps[-1] != timestep:
             continue
 
-        future_trajectory: NDArrayFloat = np.array(
-            [
-                list(object_state.position)
-                for object_state in track.object_states
-                if object_state.timestep > timestep
-            ]
-        )
+        future_trajectory: NDArrayFloat = np.array([
+            list(object_state.position) for object_state in track.object_states
+            if object_state.timestep > timestep
+        ])
         # Get actor trajectory and heading history
-        history_trajectory: NDArrayFloat = np.array(
-            [
-                list(object_state.position)
-                for object_state in track.object_states
-                if object_state.timestep <= timestep
-            ]
-        )
-        actor_headings: NDArrayFloat = np.array(
-            [
-                object_state.heading
-                for object_state in track.object_states
-                if object_state.timestep <= timestep
-            ]
-        )
+        history_trajectory: NDArrayFloat = np.array([
+            list(object_state.position) for object_state in track.object_states
+            if object_state.timestep <= timestep
+        ])
+        actor_headings: NDArrayFloat = np.array([
+            object_state.heading for object_state in track.object_states
+            if object_state.timestep <= timestep
+        ])
+
+        # transform
+        if origin is not None and rot is not None:
+            history_trajectory = np.matmul(history_trajectory[:, :2] - origin,
+                                           rot)
+            actor_headings = actor_headings - (-np.arccos(rot[0][0]))
+            if future_trajectory.size != 0:
+                future_trajectory = np.matmul(future_trajectory[:] - origin,
+                                              rot)
 
         # Plot polyline for focal agent location history
         track_color = _DEFAULT_ACTOR_COLOR
@@ -196,7 +222,10 @@ def _plot_actor_tracks(
             continue
 
         track_color = _DEFAULT_ACTOR_COLOR
-        _scatter_polylines([history_trajectory], cmap="Blues", linewidth=5, arrow=False)
+        _scatter_polylines([history_trajectory],
+                           cmap="Blues",
+                           linewidth=5,
+                           arrow=False)
         if track.track_id == focal_id:
             track_bounds = history_trajectory[-1]
             track_color = _FOCAL_AGENT_COLOR
@@ -210,10 +239,8 @@ def _plot_actor_tracks(
                 track_color,
                 (_ESTIMATED_VEHICLE_LENGTH_M, _ESTIMATED_VEHICLE_WIDTH_M),
             )
-        elif (
-            track.object_type == ObjectType.CYCLIST
-            or track.object_type == ObjectType.MOTORCYCLIST
-        ):
+        elif (track.object_type == ObjectType.CYCLIST
+              or track.object_type == ObjectType.MOTORCYCLIST):
             _plot_actor_bounding_box(
                 ax,
                 history_trajectory[-1],
@@ -234,6 +261,7 @@ def _plot_actor_tracks(
 
 
 class HandlerColorLineCollection(HandlerLineCollection):
+
     def __init__(
         self,
         reverse: bool = False,
@@ -244,9 +272,8 @@ class HandlerColorLineCollection(HandlerLineCollection):
         super().__init__(marker_pad, numpoints, **kwargs)
         self.reverse = reverse
 
-    def create_artists(
-        self, legend, artist, xdescent, ydescent, width, height, fontsize, trans
-    ):
+    def create_artists(self, legend, artist, xdescent, ydescent, width, height,
+                       fontsize, trans):
         x = np.linspace(0, width, self.get_numpoints(legend) + 1)
         y = np.zeros(self.get_numpoints(legend) + 1) + height / 2.0 - ydescent
         points = np.array([x, y]).T.reshape(-1, 1, 2)
@@ -265,6 +292,8 @@ def _plot_polylines(
     alpha: float = 1.0,
     color: str = "r",
     endpoint: bool = False,
+    origin=None,
+    rot=None,
     **kwargs,
 ) -> None:
     """Plot a group of polylines with the specified config.
@@ -277,6 +306,8 @@ def _plot_polylines(
         color: Desired color for the plotted lines.
     """
     for polyline in polylines:
+        if polyline is not None and rot is not None:
+            polyline = np.matmul(polyline[:, :2] - origin, rot)
         plt.plot(
             polyline[:, 0],
             polyline[:, 1],
@@ -287,18 +318,23 @@ def _plot_polylines(
             **kwargs,
         )
         if endpoint:
-            plt.scatter(polyline[0, 0], polyline[0, 1], color=color, s=15, **kwargs)
+            plt.scatter(polyline[0, 0],
+                        polyline[0, 1],
+                        color=color,
+                        s=15,
+                        **kwargs)
 
 
 def get_polyline_arc_length(xy: np.ndarray) -> np.ndarray:
     """Get the arc length of each point in a polyline"""
     diff = xy[1:] - xy[:-1]
-    displacement = np.sqrt(diff[:, 0] ** 2 + diff[:, 1] ** 2)
+    displacement = np.sqrt(diff[:, 0]**2 + diff[:, 1]**2)
     arc_length = np.cumsum(displacement)
     return np.concatenate((np.zeros(1), arc_length), axis=0)
 
 
-def interpolate_lane(xy: np.ndarray, arc_length: np.ndarray, steps: np.ndarray):
+def interpolate_lane(xy: np.ndarray, arc_length: np.ndarray,
+                     steps: np.ndarray):
     xy_inter = np.empty((steps.shape[0], 2), dtype=xy.dtype)
     xy_inter[:, 0] = np.interp(steps, xp=arc_length, fp=xy[:, 0])
     xy_inter[:, 1] = np.interp(steps, xp=arc_length, fp=xy[:, 1])
@@ -365,9 +401,11 @@ def _scatter_polylines(
             polyline = inter_poly.reshape(-1, 1, 2)
             segment = np.concatenate([polyline[:-1], polyline[1:]], axis=1)
             norm = plt.Normalize(arc.min(), arc.max())
-            lc = LineCollection(
-                segment, cmap=cmap, norm=norm, zorder=zorder, alpha=alpha
-            )
+            lc = LineCollection(segment,
+                                cmap=cmap,
+                                norm=norm,
+                                zorder=zorder,
+                                alpha=alpha)
             lc.set_array(arc if not reverse else arc[::-1])
             lc.set_linewidth(linewidth)
             ax.add_collection(lc)
@@ -383,9 +421,10 @@ def _scatter_polylines(
             )
 
 
-def _plot_polygons(
-    polygons: Sequence[NDArrayFloat], *, alpha: float = 1.0, color: str = "r"
-) -> None:
+def _plot_polygons(polygons: Sequence[NDArrayFloat],
+                   *,
+                   alpha: float = 1.0,
+                   color: str = "r") -> None:
     """Plot a group of filled polygons with the specified config.
 
     Args:

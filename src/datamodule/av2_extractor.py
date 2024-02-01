@@ -61,17 +61,17 @@ class Av2Extractor:
             ],
         )
 
-        timestamps = list(np.sort(df["timestep"].unique()))
-        cur_df = df[df["timestep"] == timestamps[49]]
+        timestamps = list(np.sort(df["timestep"].unique()))  # 50 - 60
+        cur_df = df[df["timestep"] == timestamps[49]]  # align timestamp
         actor_ids = list(cur_df["track_id"].unique())
         cur_pos = torch.from_numpy(cur_df[["position_x", "position_y"]].values).float()
         out_of_range = np.linalg.norm(cur_pos - origin, axis=1) > self.radius
         actor_ids = [aid for i, aid in enumerate(actor_ids) if not out_of_range[i]]
-        actor_ids.remove(agent_id)
-        actor_ids = [agent_id] + actor_ids
+        actor_ids.remove(agent_id)  
+        actor_ids = [agent_id] + actor_ids # make sure predicted object is first
         num_nodes = len(actor_ids)
 
-        df = df[df["track_id"].isin(actor_ids)]
+        df = df[df["track_id"].isin(actor_ids)]  # delete objects which is not in radius.
 
         # initialization
         x = torch.zeros(num_nodes, 110, 2, dtype=torch.float)
@@ -90,10 +90,10 @@ class Av2Extractor:
             x_attr[node_idx, 2] = OBJECT_TYPE_MAP_COMBINED[
                 actor_df["object_type"].values[0]
             ]
-            x_track_horizon[node_idx] = node_steps[-1] - node_steps[0]
+            x_track_horizon[node_idx] = node_steps[-1] - node_steps[0]  # full is 109
 
             padding_mask[node_idx, node_steps] = False
-            if padding_mask[node_idx, 49] or object_type in self.ignore_type:
+            if padding_mask[node_idx, 49] or object_type in self.ignore_type: # at least has one history frame and not static object
                 padding_mask[node_idx, 50:] = True
 
             pos_xy = torch.from_numpy(
@@ -111,7 +111,7 @@ class Av2Extractor:
             x[node_idx, node_steps, :2] = torch.matmul(pos_xy - origin, rotate_mat)
             x_heading[node_idx, node_steps] = (heading - theta + np.pi) % (
                 2 * np.pi
-            ) - np.pi
+            ) - np.pi  # bounding heading angle from [0, 2pi] to [-pi, pi]
             x_velocity[node_idx, node_steps] = velocity_norm
 
         (
@@ -216,11 +216,11 @@ class Av2Extractor:
             lane_attrs.append(attribute)
 
         lane_positions = torch.stack(lane_positions)
-        lanes_ctr = lane_positions[:, 9:11].mean(dim=1)
+        lanes_ctr = lane_positions[:, 9:11].mean(dim=1)  # Get centerline center
         lanes_angle = torch.atan2(
             lane_positions[:, 10, 1] - lane_positions[:, 9, 1],
             lane_positions[:, 10, 0] - lane_positions[:, 9, 0],
-        )
+        ) # use centerline's center calculate lane angle(has already been normed).
         is_intersections = torch.Tensor(is_intersections)
         lane_attrs = torch.stack(lane_attrs, dim=0)
 
@@ -232,9 +232,9 @@ class Av2Extractor:
             | (lane_positions[:, :, 0] < x_min)
             | (lane_positions[:, :, 1] > y_max)
             | (lane_positions[:, :, 1] < y_min)
-        )
+        )  # [num_lanes, 20] bool
 
-        invalid_mask = padding_mask.all(dim=-1)
+        invalid_mask = padding_mask.all(dim=-1)  # wheather lane is out of range(150).
         lane_positions = lane_positions[~invalid_mask]
         is_intersections = is_intersections[~invalid_mask]
         lane_attrs = lane_attrs[~invalid_mask]

@@ -40,7 +40,7 @@ LaneTypeMap = {
 
 
 def load_av2_df(scenario_file: Path):
-    scenario_id = scenario_file.stem.split("_")[-1]
+    scenario_id = scenario_file.stem.split("_")[-1]  # unique uuid like: '37052017-85f3-4676-bf91-9f275a7389e2'
     df = pd.read_parquet(scenario_file)
     static_map = ArgoverseStaticMap.from_json(
         scenario_file.parents[0] / f"log_map_archive_{scenario_id}.json"

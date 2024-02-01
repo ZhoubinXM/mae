@@ -74,7 +74,7 @@ class AgentEmbeddingLayer(nn.Module):
         laterals = [
             lateral_conv(out[i]) for i, lateral_conv in enumerate(self.lateral_convs)
         ]
-        for i in range(len(out) - 1, 0, -1):
+        for i in range(len(out) - 1, 0, -1):  # use interpolate to upsample
             laterals[i - 1] = laterals[i - 1] + F.interpolate(
                 laterals[i],
                 scale_factor=(laterals[i - 1].shape[-1] / laterals[i].shape[-1]),
@@ -90,6 +90,7 @@ class AgentEmbeddingLayer(nn.Module):
 class ConvTokenizer(nn.Module):
     def __init__(self, in_chans=3, embed_dim=32, norm_layer=None):
         super().__init__()
+        # keep time length equal. (50 +2 -3)/1 + 1 = 50
         self.proj = nn.Conv1d(in_chans, embed_dim, kernel_size=3, stride=1, padding=1)
 
         if norm_layer is not None:

@@ -184,6 +184,7 @@ class ModelMAE(nn.Module):
         return x_masked, new_key_padding_mask, ids_keep_list
 
     def forward(self, data):
+        # 历史数据的编码
         hist_padding_mask = data["x_padding_mask"][:, :, :50]
         hist_feat = torch.cat(
             [
@@ -198,6 +199,7 @@ class ModelMAE(nn.Module):
         hist_feat = self.hist_embed(hist_feat.permute(0, 2, 1).contiguous())
         hist_feat = hist_feat.view(B, N, hist_feat.shape[-1])
 
+        # 预测轨迹的编码
         future_padding_mask = data["x_padding_mask"][:, :, 50:]
         future_feat = torch.cat([data["y"], ~future_padding_mask[..., None]], dim=-1)
         B, N, L, D = future_feat.shape
@@ -205,7 +207,9 @@ class ModelMAE(nn.Module):
         future_feat = self.future_embed(future_feat.permute(0, 2, 1).contiguous())
         future_feat = future_feat.view(B, N, future_feat.shape[-1])
 
+        # 车道特征的编码
         lane_padding_mask = data["lane_padding_mask"]
+        # ？？ lane-lane_center
         lane_normalized = data["lane_positions"] - data["lane_centers"].unsqueeze(-2)
         lane_feat = torch.cat([lane_normalized, ~lane_padding_mask[..., None]], dim=-1)
         B, M, L, D = lane_feat.shape

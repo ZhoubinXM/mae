@@ -11,3 +11,4 @@ matplotlib==3.4.3
 timm
 plotly
 torchmetrics==0.10.2
+torch_scatter
