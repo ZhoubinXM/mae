@@ -11,7 +11,7 @@ from src.metrics import MR, minADE, minFDE
 from src.utils.optim import WarmupCosLR
 from src.utils.submission_av2 import SubmissionAv2
 
-from .model_forecast import ModelForecast
+from .model_mae_sept import ModelMAESEPT
 
 
 class Trainer(pl.LightningModule):
@@ -39,7 +39,7 @@ class Trainer(pl.LightningModule):
         self.save_hyperparameters()
         self.submission_handler = SubmissionAv2()
 
-        self.net = ModelForecast(
+        self.net = ModelMAESEPT(
             embed_dim=dim,
             encoder_depth=encoder_depth,
             num_heads=num_heads,
@@ -90,7 +90,8 @@ class Trainer(pl.LightningModule):
             y_hat_others[others_reg_mask], y_others[others_reg_mask]
         )
 
-        loss = agent_reg_loss + agent_cls_loss + others_reg_loss
+        # loss = agent_reg_loss + agent_cls_loss + others_reg_loss
+        loss = agent_reg_loss + agent_cls_loss
 
         return {
             "loss": loss,

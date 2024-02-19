@@ -6,21 +6,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchmetrics import MetricCollection
+from torch.optim.lr_scheduler import StepLR
 
 from src.metrics import MR, minADE, minFDE
-from src.utils.optim import WarmupCosLR
+from src.utils.optim import WarmupCosLR, LinearDecayScheduler
 from src.utils.submission_av2 import SubmissionAv2
 
-from .model_forecast import ModelForecast
+from .model_sept import ModelSEPT
 
 
 class Trainer(pl.LightningModule):
     def __init__(
         self,
-        dim=128,
+        dim=256,
         historical_steps=50,
         future_steps=60,
-        encoder_depth=4,
+        tempo_depth=3,
+        roadnet_depth=3,
+        spa_depth=2,
         num_heads=8,
         mlp_ratio=4.0,
         qkv_bias=False,
@@ -30,6 +33,9 @@ class Trainer(pl.LightningModule):
         warmup_epochs: int = 10,
         epochs: int = 60,
         weight_decay: float = 1e-4,
+        post_norm: bool = False,
+        road_embed_type: str = "transform",
+        tempo_embed_type: str = "T5",
     ) -> None:
         super(Trainer, self).__init__()
         self.warmup_epochs = warmup_epochs
@@ -39,14 +45,20 @@ class Trainer(pl.LightningModule):
         self.save_hyperparameters()
         self.submission_handler = SubmissionAv2()
 
-        self.net = ModelForecast(
+        self.net = ModelSEPT(
             embed_dim=dim,
-            encoder_depth=encoder_depth,
+            tempo_depth=tempo_depth,
+            roadnet_depth=roadnet_depth,
+            spa_depth=spa_depth,
             num_heads=num_heads,
             mlp_ratio=mlp_ratio,
             qkv_bias=qkv_bias,
             drop_path=drop_path,
             future_steps=future_steps,
+            history_steps=historical_steps,
+            post_norm=post_norm,
+            road_embed_type=road_embed_type,
+            tempo_embed_type=tempo_embed_type,
         )
 
         if pretrained_weights is not None:
@@ -75,8 +87,8 @@ class Trainer(pl.LightningModule):
         return predictions, prob
 
     def cal_loss(self, out, data):
-        y_hat, pi, y_hat_others = out["y_hat"], out["pi"], out["y_hat_others"]
-        y, y_others = data["y"][:, 0], data["y"][:, 1:]
+        y_hat, pi = out["y_hat"], out["pi"]
+        y = data["y"][:, 0]
 
         l2_norm = torch.norm(y_hat[..., :2] - y.unsqueeze(1), dim=-1).sum(dim=-1)
         best_mode = torch.argmin(l2_norm, dim=-1)
@@ -85,18 +97,12 @@ class Trainer(pl.LightningModule):
         agent_reg_loss = F.smooth_l1_loss(y_hat_best[..., :2], y)
         agent_cls_loss = F.cross_entropy(pi, best_mode.detach())
 
-        others_reg_mask = ~data["x_padding_mask"][:, 1:, 50:]
-        others_reg_loss = F.smooth_l1_loss(
-            y_hat_others[others_reg_mask], y_others[others_reg_mask]
-        )
-
-        loss = agent_reg_loss + agent_cls_loss + others_reg_loss
+        loss = agent_reg_loss + agent_cls_loss
 
         return {
             "loss": loss,
             "reg_loss": agent_reg_loss.item(),
             "cls_loss": agent_cls_loss.item(),
-            "others_reg_loss": others_reg_loss.item(),
         }
 
     def training_step(self, data, batch_idx):
@@ -211,11 +217,13 @@ class Trainer(pl.LightningModule):
         optimizer = torch.optim.AdamW(
             optim_groups, lr=self.lr, weight_decay=self.weight_decay
         )
-        scheduler = WarmupCosLR(
-            optimizer=optimizer,
-            lr=self.lr,
-            min_lr=1e-6,
-            warmup_epochs=self.warmup_epochs,
-            epochs=self.epochs,
-        )
+        # scheduler = WarmupCosLR(
+        #     optimizer=optimizer,
+        #     lr=self.lr,
+        #     min_lr=1e-6,
+        #     warmup_epochs=self.warmup_epochs,
+        #     epochs=self.epochs,
+        # )
+        # scheduler = StepLR(optimizer, step_size=15, gamma=0.8)
+        scheduler = LinearDecayScheduler(optimizer, max_epochs=self.epochs)
         return [optimizer], [scheduler]

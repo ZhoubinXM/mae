@@ -19,9 +19,12 @@ sync_bn: true
 batch_size: 32
 epochs: 60
 warmup_epochs: 10
+post_norm: False
+road_embed_type: transform
+tempo_embed_type: T5
 
 # optimizer
-lr: 0.001
+lr: 0.0002
 weight_decay: 1e-4
 gradient_clip_val: 5
 gradient_clip_algorithm: norm

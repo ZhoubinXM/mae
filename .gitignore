@@ -158,5 +158,7 @@ cython_debug/
 #.idea/
 .vscode
 outputs/
+multirun/
 submission/
 checkpoints/
+*.sh
