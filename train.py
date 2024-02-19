@@ -38,7 +38,7 @@ def main(conf):
             save_top_k=conf.save_top_k,
             save_last=True,
         ),
-        RichModelSummary(max_depth=1),
+        RichModelSummary(max_depth=2),
         RichProgressBar(),
         LearningRateMonitor(logging_interval="epoch"),
     ]
@@ -50,7 +50,7 @@ def main(conf):
         max_epochs=conf.epochs,
         accelerator="gpu",
         devices=conf.gpus,
-        strategy="ddp_find_unused_parameters_false" if conf.gpus > 1 else None,
+        # strategy="ddp" if conf.gpus > 1 else None,
         callbacks=callbacks,
         limit_train_batches=conf.limit_train_batches,
         limit_val_batches=conf.limit_val_batches,

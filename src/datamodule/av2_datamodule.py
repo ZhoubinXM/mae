@@ -4,7 +4,7 @@ from typing import Optional
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader as TorchDataLoader
 
-from .av2_dataset import Av2Dataset, collate_fn
+from .av2_dataset import Av2Dataset, collate_fn, sept_collate_fn, sept_collate_fn_lane_candidate
 
 
 class Av2DataModule(LightningDataModule):
@@ -23,6 +23,13 @@ class Av2DataModule(LightningDataModule):
         super(Av2DataModule, self).__init__()
         self.data_root = Path(data_root)
         self.data_folder = data_folder
+        if data_folder in ["model_mae_sept"]:
+            self.data_folder = "forecast-mae"
+        if data_folder in ["model_sept"]:
+            self.data_folder = "forecast-sept-dev"
+            self.collate_fn = sept_collate_fn_lane_candidate
+        else:
+            self.collate_fn = collate_fn
         self.batch_size = train_batch_size
         self.val_batch_size = val_batch_size
         self.test_batch_size = test_batch_size
@@ -51,7 +58,7 @@ class Av2DataModule(LightningDataModule):
             shuffle=self.shuffle,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
-            collate_fn=collate_fn,
+            collate_fn=self.collate_fn,
         )
 
     def val_dataloader(self):
@@ -61,7 +68,7 @@ class Av2DataModule(LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
-            collate_fn=collate_fn,
+            collate_fn=self.collate_fn,
         )
 
     def test_dataloader(self):
@@ -71,5 +78,5 @@ class Av2DataModule(LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
-            collate_fn=collate_fn,
+            collate_fn=self.collate_fn,
         )
