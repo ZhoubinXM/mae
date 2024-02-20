@@ -3,7 +3,7 @@ pip3 --no-cache-dir install \
      torchvision==0.12.0+cu113 \
      --extra-index-url https://download.pytorch.org/whl/cu113
 
-pip3 install natten==0.14.2 -f https://shi-labs.com/natten/wheels/cu113/torch1.11/index.html
+pip3 install natten==0.14.4
 
-pip install -r ./requirements.txt
-pip install av2
+pip install -r ./requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install av2 -i https://pypi.tuna.tsinghua.edu.cn/simple

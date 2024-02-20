@@ -161,3 +161,4 @@ outputs/
 multirun/
 submission/
 checkpoints/
+*.sh
