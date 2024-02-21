@@ -39,7 +39,8 @@ class Av2Extractor:
         except Exception:
             print(traceback.format_exc())
             print("found error while extracting data from {}".format(file))
-        save_dir = Path("/environment-information/jerome.zhou/av2/model-sept-dev") / self.save_path.stem
+        # save_dir = Path("/environment-information/jerome.zhou/av2/model-sept") / self.save_path.stem
+        save_dir = Path("/data/jerome.zhou/prediction_dataset/av2/model-sept") / self.save_path.stem
         save_file = save_dir / (file.stem + ".pt")
         torch.save(data, save_file)
 
@@ -140,6 +141,7 @@ class Av2Extractor:
             lane_attr,
             lane_padding_mask,
             lane_candidate,
+            pad_lane_mask,
         ) = self.get_candidate_lane_features(am, origin, origin, rotate_mat,
                                          self.radius)
 
@@ -218,6 +220,7 @@ class Av2Extractor:
             "track_id": agent_id,
             "city": city,
             "lane_candidate": lane_candidate,
+            "pad_lane_mask": pad_lane_mask,
         }
 
     @staticmethod
@@ -324,6 +327,7 @@ class Av2Extractor:
         candidate_segments_id = [lane.id for lane in candidate_segments]
         candidate_segments_id = set(candidate_segments_id)
         lane_positions, is_intersections, lane_attrs, candidatae = [], [], [], []
+        lane_center, lane_angle = [], []
         for segment in lane_segments:
             if segment.id in candidate_segments_id:
                 candidatae.append(True)
@@ -334,6 +338,35 @@ class Av2Extractor:
                 right_ln_boundary=segment.right_lane_boundary.xyz,
                 num_interp_pts=20,
             )
+            # 然后，计算中心线的总长度
+            total_length = np.sum(np.sqrt(np.sum(np.diff(lane_centerline, axis=0)**2, axis=1)))
+            if total_length < 5:
+                # 如果中心线的总长度不足segment_length，只取首尾两个点
+                if len(lane_centerline) > 1:
+                    lane_centerline = np.array([lane_centerline[0], lane_centerline[-1]])
+            else:
+                # 计算需要的点的数量
+                num_pts = int(np.round(total_length / 5))
+
+                # 对中心线进行插值
+                lane_centerline = interp_utils.interp_arc(num_pts, points=lane_centerline)
+            lane_center.append(np.mean(lane_centerline, axis=0))
+            # 计算中心点
+            center_point_index = len(lane_centerline) // 2
+            center_point = lane_centerline[center_point_index]
+
+            # 计算中心点前后的点
+            prev_point = lane_centerline[center_point_index - 1] if center_point_index - 1 >= 0 else center_point
+            next_point = lane_centerline[center_point_index + 1] if center_point_index + 1 < len(lane_centerline) else center_point
+
+            # 计算两点之间的差值
+            delta_y = next_point[1] - prev_point[1]
+            delta_x = next_point[0] - prev_point[0]
+
+            # 计算并返回朝向
+            orientation = np.arctan2(delta_y, delta_x)
+            lane_angle.append(orientation)
+
             lane_centerline = torch.from_numpy(lane_centerline[:, :2]).float()
             lane_centerline = torch.matmul(lane_centerline - origin,
                                            rotate_mat)
@@ -347,18 +380,25 @@ class Av2Extractor:
             attribute = torch.tensor([lane_type, lane_width, is_intersection],
                                      dtype=torch.float)
             lane_attrs.append(attribute)
-
-        lane_positions = torch.stack(lane_positions)
-        lanes_ctr = lane_positions[:,
-                                   9:11].mean(dim=1)  # Get centerline center
-        lanes_angle = torch.atan2(
-            lane_positions[:, 10, 1] - lane_positions[:, 9, 1],
-            lane_positions[:, 10, 0] - lane_positions[:, 9, 0],
-        )  # use centerline's center calculate lane angle(has already been normed).
+        # pad tensor
+        from torch.nn.utils.rnn import pad_sequence
+        pad_lane_positions = pad_sequence(lane_positions, batch_first=True)  # [R, L, 2]
+        pad_lane_mask = torch.zeros_like(pad_lane_positions, dtype=bool)  # [R, L, 2]
+        for i, tensor in enumerate(lane_positions):
+            pad_lane_mask[i, :tensor.shape[0]] = 1
+        # lane_positions = torch.stack(lane_positions)
+        # lanes_ctr = lane_positions[:,
+        #                            9:11].mean(dim=1)  # Get centerline center
+        # lanes_angle = torch.atan2(
+        #     lane_positions[:, 10, 1] - lane_positions[:, 9, 1],
+        #     lane_positions[:, 10, 0] - lane_positions[:, 9, 0],
+        # )  # use centerline's center calculate lane angle(has already been normed).
+        lanes_ctr = torch.Tensor(lane_center)
+        lanes_angle = torch.Tensor(lane_angle)
         is_intersections = torch.Tensor(is_intersections)
         lane_attrs = torch.stack(lane_attrs, dim=0)
         candidatae = torch.Tensor(candidatae)
-
+        lane_positions = pad_lane_positions
         x_max, x_min = radius, -radius
         y_max, y_min = radius, -radius
 
@@ -377,6 +417,7 @@ class Av2Extractor:
         lanes_angle = lanes_angle[~invalid_mask]
         padding_mask = padding_mask[~invalid_mask]
         candidatae = candidatae[~invalid_mask]
+        pad_lane_mask = pad_lane_mask[~invalid_mask]
 
         lane_positions = torch.where(padding_mask[..., None],
                                      torch.zeros_like(lane_positions),
@@ -390,6 +431,7 @@ class Av2Extractor:
             lane_attrs,
             padding_mask,
             candidatae,
+            pad_lane_mask,
         )
 
 

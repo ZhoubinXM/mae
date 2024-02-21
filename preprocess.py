@@ -34,7 +34,7 @@ def preprocess(args):
             save_dir = data_root / "multiagent-baseline" / mode
             extractor = Av2ExtractorMultiAgent(save_path=save_dir, mode=mode)
         else:
-            save_dir = data_root / "forecast-sept-dev" / mode
+            save_dir = data_root / "model-sept" / mode
             extractor = Av2Extractor(save_path=save_dir, mode=mode)
 
         save_dir.mkdir(exist_ok=True, parents=True)
