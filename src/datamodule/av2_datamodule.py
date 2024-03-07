@@ -25,9 +25,11 @@ class Av2DataModule(LightningDataModule):
         self.data_folder = data_folder
         if data_folder in ["model_mae_sept"]:
             self.data_folder = "forecast-mae"
-        if data_folder in ["model_sept"]:
+        if data_folder in ["model_sept", "model_sept_mae"]:
             self.data_folder = "forecast-sept-dev"
-            self.collate_fn = sept_collate_fn_lane_candidate
+            # purn method
+            # self.data_folder = "model-sept-all"
+            self.collate_fn = sept_collate_fn
         else:
             self.collate_fn = collate_fn
         self.batch_size = train_batch_size

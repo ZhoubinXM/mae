@@ -50,7 +50,7 @@ class Block(nn.Module):
         drop=0.0,
         attn_drop=0.0,
         drop_path=0.0,
-        act_layer=nn.ReLU,
+        act_layer=nn.GELU,
         norm_layer=nn.LayerNorm,
         post_norm=False,
         attn_type="norm",
@@ -63,6 +63,7 @@ class Block(nn.Module):
             self.attn = torch.nn.MultiheadAttention(
                 dim,
                 num_heads=num_heads,
+                bias=True,
                 add_bias_kv=qkv_bias,
                 dropout=attn_drop,
                 batch_first=True,
@@ -83,7 +84,7 @@ class Block(nn.Module):
             hidden_features=int(dim * mlp_ratio),
             act_layer=act_layer,
             drop=drop,
-            bias=False,
+            bias=True,
         )
         self.drop_path2 = DropPath(
             drop_path) if drop_path > 0.0 else nn.Identity()
@@ -198,6 +199,7 @@ class CrossAttenderBlock(nn.Module):
             hidden_features=int(dim * mlp_ratio),
             act_layer=act_layer,
             drop=drop,
+            bias=True
         )
         self.drop_path2 = DropPath(
             drop_path) if drop_path > 0.0 else nn.Identity()
@@ -270,7 +272,8 @@ class T5Attention(nn.Module):
                  d_kv,
                  num_heads,
                  dropout_rate,
-                 hist_step: float = 50):
+                 hist_step: float = 50,
+                 bias: bool = True):
         super().__init__()
 
         self.d_model = d_model
@@ -280,10 +283,10 @@ class T5Attention(nn.Module):
         self.inner_dim = self.n_heads * self.d_kv
 
         # Mesh TensorFlow initialization to avoid scaling before softmax
-        self.q = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.k = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.v = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.o = nn.Linear(self.inner_dim, self.d_model, bias=False)
+        self.q = nn.Linear(self.d_model, self.inner_dim, bias=bias)
+        self.k = nn.Linear(self.d_model, self.inner_dim, bias=bias)
+        self.v = nn.Linear(self.d_model, self.inner_dim, bias=bias)
+        self.o = nn.Linear(self.inner_dim, self.d_model, bias=bias)
 
         self.pos_embed = RelativePositionBias(bidirectional=True,
                                               num_buckets=64,

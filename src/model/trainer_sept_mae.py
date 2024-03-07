@@ -12,8 +12,7 @@ from src.metrics import MR, minADE, minFDE
 from src.utils.optim import WarmupCosLR, LinearDecayScheduler
 from src.utils.submission_av2 import SubmissionAv2
 
-from .model_sept import ModelSEPT
-from .model_sept_x import ModelSEPTX
+from src.model.model_sept_mae import ModelSEPTMAE
 
 
 class Trainer(pl.LightningModule):
@@ -46,7 +45,7 @@ class Trainer(pl.LightningModule):
         self.save_hyperparameters()
         self.submission_handler = SubmissionAv2()
 
-        self.net = ModelSEPT(
+        self.net = ModelSEPTMAE(
             embed_dim=dim,
             tempo_depth=tempo_depth,
             roadnet_depth=roadnet_depth,
@@ -88,39 +87,19 @@ class Trainer(pl.LightningModule):
         return predictions, prob
 
     def cal_loss(self, out, data):
-        y_hat, pi = out["y_hat"], out["pi"]
-        y = data["y"][:, 0]
-        # l2_norm = torch.norm(y_hat[..., :2] - y.unsqueeze(1), dim=-1).sum(dim=-1)
-        # best_mode = torch.argmin(l2_norm, dim=-1)
-        # y_hat_best = y_hat[torch.arange(y_hat.shape[0]), best_mode]
+        y_hat = out["y_hat"]
+        y = data["x_trans"][..., 20:50, :].view(-1, 30, 2)
+        y_mask = data['x_padding_mask'][..., 20:50].all(-1).view(-1)
+        y = y[~y_mask]
+        y_hat = y_hat[~y_mask]
 
-        # agent_reg_loss = F.smooth_l1_loss(y_hat_best[..., :2], y)
-        # agent_cls_loss = F.cross_entropy(pi, best_mode.detach())
+        agent_reg_loss = F.smooth_l1_loss(y_hat, y)
 
-        # loss = agent_reg_loss + agent_cls_loss
-
-        # return {
-        #     "loss": loss,
-        #     "reg_loss": agent_reg_loss.item(),
-        #     "cls_loss": agent_cls_loss.item(),
-        # }
-        y_propose = out['y_hat_propose']
-        l2_norm = torch.norm(y_propose[..., :2] - y.unsqueeze(1), dim=-1).sum(dim=-1)
-        best_mode = torch.argmin(l2_norm, dim=-1)
-        y_hat_best = y_hat[torch.arange(y_hat.shape[0]), best_mode]
-        y_propose_best = y_propose[torch.arange(y_propose.shape[0]), best_mode]
-
-        agent_reg_loss = F.smooth_l1_loss(y_hat_best[..., :2], y)
-        agent_reg_loss_propose = F.smooth_l1_loss(y_propose_best[..., :2], y)
-        agent_cls_loss = F.cross_entropy(pi, best_mode.detach())
-
-        loss = agent_reg_loss + agent_cls_loss + agent_reg_loss_propose
+        loss = agent_reg_loss
 
         return {
             "loss": loss,
             "reg_loss": agent_reg_loss.item(),
-            "cls_loss": agent_cls_loss.item(),
-            "propose_loss": agent_reg_loss_propose.item(),
         }
 
     def training_step(self, data, batch_idx):
@@ -142,7 +121,7 @@ class Trainer(pl.LightningModule):
     def validation_step(self, data, batch_idx):
         out = self(data)
         losses = self.cal_loss(out, data)
-        metrics = self.val_metrics(out, data["y"][:, 0])
+        # metrics = self.val_metrics(out, data["y"][:, 0])
 
         self.log(
             "val/reg_loss",
@@ -152,14 +131,14 @@ class Trainer(pl.LightningModule):
             prog_bar=False,
             sync_dist=True,
         )
-        self.log_dict(
-            metrics,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-            batch_size=1,
-            sync_dist=True,
-        )
+        # self.log_dict(
+        #     metrics,
+        #     prog_bar=True,
+        #     on_step=False,
+        #     on_epoch=True,
+        #     batch_size=1,
+        #     sync_dist=True,
+        # )
 
     def on_test_start(self) -> None:
         save_dir = Path("./submission")
@@ -235,13 +214,5 @@ class Trainer(pl.LightningModule):
         optimizer = torch.optim.AdamW(
             optim_groups, lr=self.lr, weight_decay=self.weight_decay
         )
-        # scheduler = WarmupCosLR(
-        #     optimizer=optimizer,
-        #     lr=self.lr,
-        #     min_lr=1e-6,
-        #     warmup_epochs=self.warmup_epochs,
-        #     epochs=self.epochs,
-        # )
-        # scheduler = StepLR(optimizer, step_size=15, gamma=0.8)
-        scheduler = LinearDecayScheduler(optimizer, max_epochs=self.epochs)
-        return [optimizer], [scheduler]
+        # scheduler = LinearDecayScheduler(optimizer, max_epochs=self.epochs)
+        return [optimizer]

@@ -34,15 +34,20 @@ class Av2Extractor:
     def save(self, file: Path):
         assert self.save_path is not None
 
-        try:
-            data = self.get_data(file)
-        except Exception:
-            print(traceback.format_exc())
-            print("found error while extracting data from {}".format(file))
-        # save_dir = Path("/environment-information/jerome.zhou/av2/model-sept") / self.save_path.stem
-        save_dir = Path("/data/jerome.zhou/prediction_dataset/av2/model-sept") / self.save_path.stem
-        save_file = save_dir / (file.stem + ".pt")
-        torch.save(data, save_file)
+        # try:
+        #     data = self.get_data(file)
+        # except Exception:
+        #     print(traceback.format_exc())
+        #     print("found error while extracting data from {}".format(file))
+        focal_track_ids = []
+        for data in self.process_all(file):
+            focal_track_ids.append(data)
+
+            # # save_dir = Path("/environment-information/jerome.zhou/av2/model-sept") / self.save_path.stem
+            # save_dir = Path("/data/jerome.zhou/prediction_dataset/av2/model-sept-all") / self.save_path.stem
+            # save_dir.mkdir(exist_ok=True, parents=True)
+            # save_file = save_dir / (file.stem + "_" + data['track_id'] + ".pt")
+            # torch.save(data, save_file)
 
     def get_data(self, file: Path):
         return self.process(file)
@@ -434,7 +439,194 @@ class Av2Extractor:
             pad_lane_mask,
         )
 
+    def process_all(self, raw_path: str, agent_id=None):
+        df, am, scenario_id = load_av2_df(raw_path)
+        return df["focal_track_id"].values[0]
+        city = df.city.values[0]
+        timestamps = list(np.sort(df["timestep"].unique()))
+        cur_df = df[df["timestep"] == timestamps[49]]
+        considered_agents = cur_df[cur_df['object_category']>1.5].track_id.values
+        res = []
+        if raw_path.parts[-3] != "train":
+            considered_agents = [df["focal_track_id"].values[0]]
+        for agent_id in considered_agents:
+            data = self.process_agent(am, df, agent_id, city, scenario_id)
+            res.append(data)
+        return res
 
+    def process_agent(self, am, df, agent_id, city, scenario_id):
+        # agent_id = df["focal_track_id"].values[0]
+
+        local_df = df[df["track_id"] == agent_id].iloc
+        origin = torch.tensor(
+            [local_df[49]["position_x"], local_df[49]["position_y"]],
+            dtype=torch.float)
+        theta = torch.tensor([local_df[49]["heading"]], dtype=torch.float)
+        rotate_mat = torch.tensor([
+            [torch.cos(theta), -torch.sin(theta)],
+            [torch.sin(theta), torch.cos(theta)],
+        ], )
+
+        timestamps = list(np.sort(df["timestep"].unique()))  # 50 - 60
+        cur_df = df[df["timestep"] == timestamps[49]]  # align timestamp
+        actor_ids = list(cur_df["track_id"].unique())
+        cur_pos = torch.from_numpy(cur_df[["position_x",
+                                           "position_y"]].values).float()
+        out_of_range = np.linalg.norm(cur_pos - origin, axis=1) > self.radius
+        actor_ids = [
+            aid for i, aid in enumerate(actor_ids) if not out_of_range[i]
+        ]
+        actor_ids.remove(agent_id)
+        actor_ids = [agent_id
+                     ] + actor_ids  # make sure predicted object is first
+        num_nodes = len(actor_ids)
+
+        df = df[df["track_id"].isin(
+            actor_ids)]  # delete objects which is not in radius.
+
+        # initialization
+        x = torch.zeros(num_nodes, 110, 2, dtype=torch.float)
+        x_trans = torch.zeros(num_nodes, 110, 2, dtype=torch.float)
+        x_attr = torch.zeros(num_nodes, 3, dtype=torch.uint8)
+        x_heading = torch.zeros(num_nodes, 110, dtype=torch.float)
+        x_velocity = torch.zeros(num_nodes, 110, dtype=torch.float)
+        x_track_horizon = torch.zeros(num_nodes, dtype=torch.int)
+        padding_mask = torch.ones(num_nodes, 110, dtype=torch.bool)
+
+        for actor_id, actor_df in df.groupby("track_id"):
+            node_idx = actor_ids.index(actor_id)
+            node_steps = [timestamps.index(ts) for ts in actor_df["timestep"]]
+            object_type = OBJECT_TYPE_MAP[actor_df["object_type"].values[0]]
+            x_attr[node_idx, 0] = object_type
+            x_attr[node_idx, 1] = actor_df["object_category"].values[0]
+            x_attr[node_idx, 2] = OBJECT_TYPE_MAP_COMBINED[
+                actor_df["object_type"].values[0]]
+            x_track_horizon[node_idx] = node_steps[-1] - node_steps[
+                0]  # full is 109
+
+            padding_mask[node_idx, node_steps] = False
+            if padding_mask[
+                    node_idx,
+                    49] or object_type in self.ignore_type:  # at least has one history frame and not static object
+                padding_mask[node_idx, 50:] = True
+
+            pos_xy = torch.from_numpy(
+                np.stack(
+                    [
+                        actor_df["position_x"].values,
+                        actor_df["position_y"].values
+                    ],
+                    axis=-1,
+                )).float()
+            heading = torch.from_numpy(actor_df["heading"].values).float()
+            velocity = torch.from_numpy(actor_df[["velocity_x", "velocity_y"
+                                                  ]].values).float()
+            velocity_norm = torch.norm(velocity, dim=1)
+
+            x[node_idx, node_steps, :2] = torch.matmul(pos_xy - origin,
+                                                       rotate_mat)
+            x_heading[node_idx, node_steps] = (heading - theta + np.pi) % (
+                2 * np.pi
+            ) - np.pi  # bounding heading angle from [0, 2pi] to [-pi, pi]
+            x_velocity[node_idx, node_steps] = velocity_norm
+
+        # (
+        #     lane_positions,
+        #     is_intersections,
+        #     lane_ctrs,
+        #     lane_angles,
+        #     lane_attr,
+        #     lane_padding_mask,
+        # ) = self.get_lane_features(am, origin, origin, rotate_mat, self.radius)
+        (
+            lane_positions,
+            is_intersections,
+            lane_ctrs,
+            lane_angles,
+            lane_attr,
+            lane_padding_mask,
+            lane_candidate,
+            pad_lane_mask,
+        ) = self.get_candidate_lane_features(am, origin, origin, rotate_mat,
+                                         self.radius)
+
+        if self.remove_outlier_actors:
+            lane_samples = lane_positions[:, ::1, :2].view(-1, 2)
+            nearest_dist = torch.cdist(x[:, 49, :2],
+                                       lane_samples).min(dim=1).values
+            valid_actor_mask = nearest_dist < 5
+            valid_actor_mask[0] = True  # always keep the target agent
+
+            x = x[valid_actor_mask]
+            x_heading = x_heading[valid_actor_mask]
+            x_velocity = x_velocity[valid_actor_mask]
+            x_attr = x_attr[valid_actor_mask]
+            padding_mask = padding_mask[valid_actor_mask]
+            num_nodes = x.shape[0]
+
+        x_trans = x.clone()
+        x_ctrs = x[:, 49, :2].clone()
+        x_positions = x[:, :50, :2].clone()
+        x_velocity_diff = x_velocity[:, :50].clone()
+
+        x[:, 50:] = torch.where(
+            (padding_mask[:, 49].unsqueeze(-1)
+             | padding_mask[:, 50:]).unsqueeze(-1),
+            torch.zeros(num_nodes, 60, 2),
+            x[:, 50:] - x[:, 49].unsqueeze(-2),
+        )
+        x[:, 1:50] = torch.where(
+            (padding_mask[:, :49] | padding_mask[:, 1:50]).unsqueeze(-1),
+            torch.zeros(num_nodes, 49, 2),
+            x[:, 1:50] - x[:, :49],
+        )
+        x_trans[:, 50:] = torch.where(
+            (padding_mask[:, 49].unsqueeze(-1)
+             | padding_mask[:, 50:]).unsqueeze(-1),
+            torch.zeros(num_nodes, 60, 2),
+            x_trans[:, 50:],
+        )
+        x_trans[:, :50] = torch.where(
+            (padding_mask[:, :50] | padding_mask[:, :50]).unsqueeze(-1),
+            torch.zeros(num_nodes, 50, 2),
+            x_trans[:, :50],
+        )
+        x[:, 0] = torch.zeros(num_nodes, 2)
+
+        x_velocity_diff[:, 1:50] = torch.where(
+            (padding_mask[:, :49] | padding_mask[:, 1:50]),
+            torch.zeros(num_nodes, 49),
+            x_velocity_diff[:, 1:50] - x_velocity_diff[:, :49],
+        )
+        x_velocity_diff[:, 0] = torch.zeros(num_nodes)
+
+        y = None if self.mode == "test" else x[:, 50:]
+
+        return {
+            "x": x[:, :50],
+            "y": y,
+            "x_trans": x_trans,
+            "x_attr": x_attr,
+            "x_positions": x_positions,
+            "x_centers": x_ctrs,
+            "x_angles": x_heading,
+            "x_velocity": x_velocity,
+            "x_velocity_diff": x_velocity_diff,
+            "x_padding_mask": padding_mask,
+            "lane_positions": lane_positions,
+            "lane_centers": lane_ctrs,
+            "lane_angles": lane_angles,
+            "lane_attr": lane_attr,
+            "lane_padding_mask": lane_padding_mask,
+            "is_intersections": is_intersections,
+            "origin": origin.view(-1, 2),
+            "theta": theta,
+            "scenario_id": scenario_id,
+            "track_id": agent_id,
+            "city": city,
+            "lane_candidate": lane_candidate,
+            "pad_lane_mask": pad_lane_mask,
+        }
 def dfs(lane_segment: LaneSegment,
         am: ArgoverseStaticMap,
         extend_along_predecessor: bool = False,

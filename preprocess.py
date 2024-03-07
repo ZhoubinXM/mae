@@ -9,7 +9,7 @@ from src.datamodule.av2_extractor import Av2Extractor
 from src.datamodule.av2_extractor_multiagent import Av2ExtractorMultiAgent
 from src.utils.ray_utils import ActorHandle, ProgressBar
 
-ray.init(num_cpus=64)
+# ray.init(num_cpus=64)
 
 
 def glob_files(data_root: Path, mode: str):

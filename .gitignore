@@ -162,3 +162,5 @@ multirun/
 submission/
 checkpoints/
 *.sh
+viz/
+viz/*.jpg

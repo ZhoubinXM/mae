@@ -68,9 +68,9 @@ class Av2ExtractorMultiAgent:
         object_category = torch.from_numpy(
             cur_df["object_category"].values).float()
         cur_pos = torch.from_numpy(cur_df[["position_x",
-                                           "position_y"]].values).float()
+                                           "position_y"]].values).float() # 预测帧各个障碍物的位置
 
-        scored_agents_mask = object_category > 1.5
+        scored_agents_mask = object_category > 1.5 # 可以被预测的障碍物 mask
         out_of_range = np.linalg.norm(
             cur_pos - origin,
             axis=1) > self.radius  # check agent is out of 150m relative AV
@@ -78,14 +78,14 @@ class Av2ExtractorMultiAgent:
 
         actor_ids = [
             aid for i, aid in enumerate(actor_ids) if not out_of_range[i]
-        ]
+        ] # get in range agent id list
         av_idx = actor_ids.index(agent_id)
-        scored_agents_mask = scored_agents_mask[~out_of_range]
-        num_nodes = len(actor_ids)
+        scored_agents_mask = scored_agents_mask[~out_of_range] # can be predict mask
+        num_nodes = len(actor_ids) # get in range agents num
 
-        df = df[df["track_id"].isin(actor_ids)]  # get all predict agent
+        df = df[df["track_id"].isin(actor_ids)]  # get all agent frames
 
-        # initialization
+        # initialization, 填充每个场景内每个障碍物的属性，trans to AV local coornidate
         x = torch.zeros(num_nodes, 110, 2, dtype=torch.float)
         x_attr = torch.zeros(num_nodes, 3, dtype=torch.uint8)
         x_heading = torch.zeros(num_nodes, 110, dtype=torch.float)
@@ -94,19 +94,19 @@ class Av2ExtractorMultiAgent:
         padding_mask = torch.ones(num_nodes, 110, dtype=torch.bool)
 
         for actor_id, actor_df in df.groupby("track_id"):
-            node_idx = actor_ids.index(actor_id)
-            node_steps = [timestamps.index(ts) for ts in actor_df["timestep"]]
+            node_idx = actor_ids.index(actor_id) # 第几个agent
+            node_steps = [timestamps.index(ts) for ts in actor_df["timestep"]] # 该agent的时间戳
             object_type = OBJECT_TYPE_MAP[actor_df["object_type"].values[0]]
             x_attr[node_idx, 0] = object_type
-            x_attr[node_idx, 1] = actor_df["object_category"].values[0]
+            x_attr[node_idx, 1] = actor_df["object_category"].values[0] # scored
             x_attr[node_idx, 2] = OBJECT_TYPE_MAP_COMBINED[
                 actor_df["object_type"].values[0]]
-            x_track_horizon[node_idx] = node_steps[-1] - node_steps[0]
+            x_track_horizon[node_idx] = node_steps[-1] - node_steps[0] # 存在时长
 
-            padding_mask[node_idx, node_steps] = False
+            padding_mask[node_idx, node_steps] = False  # 存在值， mask给False
             if padding_mask[node_idx, 49] or object_type in self.ignore_type:
                 padding_mask[node_idx, 50:] = True
-
+            # 如果预测帧没有数据且agent要被忽略，未来帧直接mask
             # global coordinate
             pos_xy = torch.from_numpy(
                 np.stack(
@@ -120,14 +120,14 @@ class Av2ExtractorMultiAgent:
             velocity = torch.from_numpy(actor_df[["velocity_x", "velocity_y"
                                                   ]].values).float()
             velocity_norm = torch.norm(velocity, dim=1)
-            # transform to AV coordinate
+            # transform to AV coordinate， global->local
             x[node_idx, node_steps, :2] = torch.matmul(pos_xy - origin,
                                                        rotate_mat)
             x_heading[
                 node_idx,
-                node_steps] = (heading - theta + np.pi) % (2 * np.pi) - np.pi
+                node_steps] = (heading - theta + np.pi) % (2 * np.pi) - np.pi # bounding to
             x_velocity[node_idx, node_steps] = velocity_norm
-
+        # 获得AV周围的车道特征
         (
             lane_positions,
             is_intersections,
@@ -136,12 +136,12 @@ class Av2ExtractorMultiAgent:
             lane_attr,
             lane_padding_mask,
         ) = self.get_lane_features(am, origin, origin, rotate_mat, self.radius)
-
+        # 剔除掉距离车道较远的障碍物
         if self.remove_outlier_actors:
             lane_samples = lane_positions[:, ::1, :2].view(-1, 2)
             nearest_dist = torch.cdist(x[:, 49, :2],
-                                       lane_samples).min(dim=1).values
-            valid_actor_mask = nearest_dist < 5
+                                       lane_samples).min(dim=1).values # 获取每个agent与最近车道线段的距离
+            valid_actor_mask = nearest_dist < 5  # 距离太远的剔除
             valid_actor_mask[0] = True  # always keep av and scored agents
             valid_actor_mask[scored_agents_mask] = True
 
@@ -166,13 +166,13 @@ class Av2ExtractorMultiAgent:
              | padding_mask[:, 50:]).unsqueeze(-1),
             torch.zeros(num_nodes, 60, 2),
             x[:, 50:] - x[:, 49].unsqueeze(-2),
-        )
+        ) # if 当前帧或者之后的帧为被mask，填充0，将来的轨迹相对于每个障碍物当前帧的偏差
         # get past trajectory position diff with himselves last frame
         x[:, 1:50] = torch.where(
             (padding_mask[:, :49] | padding_mask[:, 1:50]).unsqueeze(-1),
             torch.zeros(num_nodes, 49, 2),
             x[:, 1:50] - x[:, :49],
-        )
+        ) # 位移偏差 相对于前一帧
         ## first frame diff is zero.
         x[:, 0] = torch.zeros(num_nodes, 2)
 
@@ -180,7 +180,7 @@ class Av2ExtractorMultiAgent:
             (padding_mask[:, :49] | padding_mask[:, 1:50]),
             torch.zeros(num_nodes, 49),
             x_velocity_diff[:, 1:50] - x_velocity_diff[:, :49],
-        )
+        ) # 速度偏差 相对于前一帧
         x_velocity_diff[:, 0] = torch.zeros(num_nodes)
 
         y = None if self.mode == "test" else x[:, 50:]

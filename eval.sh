@@ -8,8 +8,8 @@
 #   test=True \
 
 python3 eval.py \
-  model=model_mae_sept \
+  model=model_multiagent_mae \
   data_root="/data/jerome.zhou/prediction_dataset/av2" \
-  batch_size=64 \
-  checkpoint="./outputs/model_mae_sept-forecast/2024-02-06/00-43-04/checkpoints/last.ckpt" \
+  batch_size=16 \
+  "checkpoint='./outputs/multiagent_16_qcnetx_dec_temp_token/2024-03-07/00-58-44/checkpoints/epoch=40.ckpt'" \
   test=True \

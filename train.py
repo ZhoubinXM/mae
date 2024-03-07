@@ -1,4 +1,5 @@
 import os
+import torch
 
 import hydra
 import pytorch_lightning as pl
@@ -11,6 +12,7 @@ from pytorch_lightning.callbacks import (
     RichProgressBar,
 )
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
+from pytorch_lightning.strategies import DDPStrategy
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
@@ -38,7 +40,7 @@ def main(conf):
             save_top_k=conf.save_top_k,
             save_last=True,
         ),
-        RichModelSummary(max_depth=2),
+        RichModelSummary(max_depth=3),
         RichProgressBar(),
         LearningRateMonitor(logging_interval="epoch"),
     ]
@@ -50,7 +52,10 @@ def main(conf):
         max_epochs=conf.epochs,
         accelerator="gpu",
         devices=conf.gpus,
-        # strategy="ddp" if conf.gpus > 1 else None,
+        # strategy="ddp_find_unused_parameters_false",
+        strategy=DDPStrategy(find_unused_parameters=True, gradient_as_bucket_view=True),
+        # strategy="ddp",
+        # if conf.gpus > 1 else None,
         callbacks=callbacks,
         limit_train_batches=conf.limit_train_batches,
         limit_val_batches=conf.limit_val_batches,
@@ -60,7 +65,24 @@ def main(conf):
     model = instantiate(conf.model.target)
     datamodule = instantiate(conf.datamodule)
     trainer.fit(model, datamodule, ckpt_path=conf.checkpoint)
+    # 加载checkpoint
+    # checkpoint = torch.load(conf.checkpoint)
+    # # model.load_state_dict(checkpoint['state_dict'])
+    # model = model.load_from_checkpoint(conf.checkpoint)
+
+    # # 获取优化器
+    # optimizer = model.configure_optimizers()
+
+    # # 设置新的学习率
+    # lr = conf.lr
+    # for param_group in optimizer[0][0].param_groups:
+    #     param_group['lr'] = lr
+
+    # # 开始训练
+    # trainer.fit(model, datamodule)
+
 
 
 if __name__ == "__main__":
+    os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'INFO'
     main()

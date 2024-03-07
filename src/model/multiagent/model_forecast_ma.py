@@ -4,7 +4,7 @@ import torch.nn as nn
 from ..layers.agent_embedding import AgentEmbeddingLayer
 from ..layers.lane_embedding import LaneEmbeddingLayer
 from ..layers.transformer_blocks import Block
-from torch_scatter import scatter_mean
+# from torch_scatter import scatter_mean
 
 
 class MLPDecoder(nn.Module):
