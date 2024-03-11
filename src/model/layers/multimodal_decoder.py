@@ -128,21 +128,21 @@ class MultiAgentDecoder(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(embed_dim, future_steps * 2),
         )
-        self.pi = nn.Sequential(
-            nn.Linear(embed_dim, hidden_dim),
-            # nn.LayerNorm(hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, embed_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(embed_dim, 1),
-        )
+        # self.pi = nn.Sequential(
+        #     nn.Linear(embed_dim, hidden_dim),
+        #     # nn.LayerNorm(hidden_dim),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(hidden_dim, embed_dim),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(embed_dim, 1),
+        # )
 
     def forward(self, x):
         B, N, m, _ = x.shape
         loc = self.loc(x).view(B, N, m, self.future_steps, 2)
-        pi = self.pi(x).squeeze(-1).view(B, N, m)
+        # pi = self.pi(x).squeeze(-1).view(B, N, m)
 
-        return loc, pi
+        return loc
     
 class MultiAgentProposeDecoder(nn.Module):
     """A naive MLP-based multimodal decoder"""

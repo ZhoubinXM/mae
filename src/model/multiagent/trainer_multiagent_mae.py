@@ -103,7 +103,7 @@ class Trainer(pl.LightningModule):
             :,
         ]
         reg_mask = ~y_padding_mask  # [b,n,t]
-        # reg_mask[~x_scored] = False
+        reg_mask[~x_scored] = False
         # y_hat_best = y_hat[torch.arange(y_hat.shape[0]), best_mode]
 
         reg_loss = F.smooth_l1_loss(y_hat_best[reg_mask], y[reg_mask])
