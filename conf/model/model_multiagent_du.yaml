@@ -2,7 +2,7 @@ name: multiagent-baseline
 phase: forecast
 
 target:
-  _target_: src.model.multiagent.trainer_multiagent_mae.Trainer
+  _target_: src.model.multiagent.trainer_multiagent_divide_unit.Trainer
   dim: 128
   historical_steps: 50
   future_steps: 60

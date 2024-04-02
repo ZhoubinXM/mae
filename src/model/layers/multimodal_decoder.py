@@ -1,4 +1,6 @@
 import torch.nn as nn
+from src.utils.weight_init import weight_init
+from src.model.layers.transformer_blocks import RMSNorm
 
 
 class MultimodalDecoder(nn.Module):
@@ -33,6 +35,35 @@ class MultimodalDecoder(nn.Module):
         pi = self.pi(x).squeeze(-1)
 
         return loc, pi
+
+class MultimodalPiDecoder(nn.Module):
+    """A naive MLP-based multimodal decoder"""
+
+    def __init__(self, embed_dim, future_steps, hidden_dim=256,
+                 norm_layer=RMSNorm,
+                 act_layer=nn.GELU) -> None:
+        super().__init__()
+
+        self.embed_dim = embed_dim
+        self.future_steps = future_steps
+
+        # self.multimodal_proj = nn.Linear(embed_dim, 6 * embed_dim)
+
+        self.pi = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            # nn.ReLU(inplace=True),
+            # nn.Linear(hidden_dim, embed_dim),
+            norm_layer(hidden_dim),
+            act_layer(),
+            nn.Linear(hidden_dim, 1),
+        )
+        self.apply(weight_init)
+
+    def forward(self, x):
+        # x = self.multimodal_proj(x).view(-1, 6, self.embed_dim)
+        pi = self.pi(x).squeeze(-1)
+
+        return pi
 
 class SEPTMultimodalDecoder(nn.Module):
     """A naive MLP-based multimodal decoder"""

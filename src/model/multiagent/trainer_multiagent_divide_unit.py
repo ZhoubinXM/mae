@@ -8,7 +8,7 @@ from src.metrics import AvgMinADE, AvgMinFDE, ActorMR
 from src.utils.optim import WarmupCosLR
 from src.utils.submission_av2_multiagent import SubmissionAv2MultiAgent
 
-from src.model.multiagent.model_multiagent_mae import ModelMultiAgentMAE
+from src.model.multiagent.model_multiagent_divide_unit import ModelMultiAgentDU
 
 
 class Trainer(pl.LightningModule):
@@ -39,7 +39,7 @@ class Trainer(pl.LightningModule):
         self.save_hyperparameters(ignore=["submission_handler"])
         self.num_modes = num_modes
 
-        self.net = ModelMultiAgentMAE(
+        self.net = ModelMultiAgentDU(
             embed_dim=dim,
             encoder_depth=encoder_depth,
             num_heads=num_heads,
@@ -66,8 +66,7 @@ class Trainer(pl.LightningModule):
         return self.net(data)
 
     def cal_loss(self, outputs, data):
-        y_hat = outputs["y_hat"]
-        pi = outputs["pi"]
+        y_hat, pi = outputs["y_hat"], outputs["pi"]
         y_propose = outputs["y_propose"]
 
         x_scored, y, y_padding_mask = (
@@ -113,7 +112,9 @@ class Trainer(pl.LightningModule):
         # cls_loss = F.cross_entropy(
         #     pi.view(-1, pi.size(-1))[reg_mask.all(-1).view(-1)],
         #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
-        cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
+        cls_loss = F.cross_entropy(
+            pi.squeeze(-1),
+            best_mode.detach())
 
         loss = reg_loss + cls_loss + propose_reg_loss
         out = {
@@ -197,7 +198,6 @@ class Trainer(pl.LightningModule):
             nn.MultiheadAttention,
             nn.LSTM,
             nn.GRU,
-            nn.GRUCell,
         )
         blacklist_weight_modules = (
             nn.BatchNorm1d,
@@ -249,13 +249,11 @@ class Trainer(pl.LightningModule):
         optimizer = torch.optim.AdamW(optim_groups,
                                       lr=self.lr,
                                       weight_decay=self.weight_decay)
-        # scheduler = WarmupCosLR(
-        #     optimizer=optimizer,
-        #     lr=self.lr,
-        #     min_lr=1e-6,
-        #     warmup_epochs=self.warmup_epochs,
-        #     epochs=self.epochs,
-        # )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer=optimizer, T_max=self.epochs, eta_min=0)
+        scheduler = WarmupCosLR(
+            optimizer=optimizer,
+            lr=self.lr,
+            min_lr=1e-6,
+            warmup_epochs=self.warmup_epochs,
+            epochs=self.epochs,
+        )
         return [optimizer], [scheduler]
