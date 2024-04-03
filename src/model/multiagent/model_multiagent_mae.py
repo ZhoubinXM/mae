@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 # from ..layers.agent_embedding import AgentEmbeddingLayer
-from ..layers.lane_embedding import LaneEmbeddingLayer
 from ..layers.transformer_blocks import Block, CrossAttenderBlock
 from torch_scatter import scatter_mean
 from ..layers.multimodal_decoder import MultiAgentDecoder, MultiAgentProposeDecoder
@@ -29,15 +28,18 @@ class ModelMultiAgentMAE(nn.Module):
 
     def __init__(
         self,
-        embed_dim=256,
-        encoder_depth=4,
+        embed_dim=128,
+        encoder_depth=3,
         num_heads=8,
-        mlp_ratio=4.0,
         qkv_bias=False,
-        drop_path=0.2,
+        attn_bias=True,
+        ffn_bias=True,
+        dropout=0.1,
         future_steps: int = 60,
         num_modes: int = 6,
         use_cls_token: bool = True,
+        act_layer=nn.ReLU,
+        norm_layer=nn.LayerNorm,
     ) -> None:
         super().__init__()
         self.num_modes = num_modes

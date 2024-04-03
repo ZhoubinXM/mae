@@ -27,8 +27,8 @@ class FourierEmbedding(nn.Module):
                  input_dim: int,
                  hidden_dim: int,
                  num_freq_bands: int,
-                 act_layer=nn.GELU,
-                 norm_layer=RMSNorm) -> None:
+                 act_layer=nn.ReLU,
+                 norm_layer=nn.LayerNorm) -> None:
         super(FourierEmbedding, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim

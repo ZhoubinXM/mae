@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from timm.models.layers import DropPath
 from torch import Tensor
 from src.model.layers.relative_position_bias import RelativePositionBias
+from src.utils.weight_init import weight_init
 
 class RMSNorm(nn.Module):
     def __init__(self, dim):
@@ -46,6 +47,24 @@ class Mlp(nn.Module):
         x = self.drop2(x)
         return x
 
+class MLPLayer(nn.Module):
+
+    def __init__(self, input_dim: int, hidden_dim: int,
+                 output_dim: int,
+                 act_layer=nn.ReLU,
+                 norm_layer=nn.LayerNorm) -> None:
+        super(MLPLayer, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            norm_layer(hidden_dim),
+            act_layer(),
+            nn.Linear(hidden_dim, output_dim),
+        )
+        self.apply(weight_init)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.mlp(x)
+
 
 class Block(nn.Module):
 
@@ -59,7 +78,7 @@ class Block(nn.Module):
         attn_drop=0.0,
         drop_path=0.0,
         act_layer=nn.GELU,
-        norm_layer=RMSNorm,
+        norm_layer=nn.LayerNorm,
         post_norm=False,
         attn_type="norm",
         max_t_len=50,
