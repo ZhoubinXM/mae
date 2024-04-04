@@ -24,7 +24,7 @@ class AgentEncoder(nn.Module):
         super().__init__()
 
         category_input_dim = 5
-        agent_history_steps = 51
+        agent_history_steps = 50
         input_dim = 4
         agent_pos_input_dim = 4
 
@@ -59,6 +59,7 @@ class AgentEncoder(nn.Module):
             input_dim=agent_pos_input_dim,
             hidden_dim=hidden_dim,
             output_dim=hidden_dim,
+            norm_layer=None,
         )
 
         self.apply(weight_init)
@@ -100,6 +101,11 @@ class AgentEncoder(nn.Module):
                                                  -1)[~agent_padding_mask]
             ])
 
+        agent_hist_positions = torch.arange(T).unsqueeze(0).repeat(
+            agent_feat.shape[0], 1).to(agent_feat.device)
+        traj_pos_embed = self.traj_hist_position_emb(agent_hist_positions)
+        agent_feat = agent_feat + traj_pos_embed
+
         agent_tempo_query = self.agent_tempo_query[None, :, :].repeat(
             agent_feat.shape[0], 1, 1)
         agent_feat = torch.cat([agent_tempo_query, agent_feat], dim=1)
@@ -108,11 +114,6 @@ class AgentEncoder(nn.Module):
                 agent_hist_padding_mask.device), agent_hist_padding_mask
         ],
                                             dim=1)
-
-        agent_hist_positions = torch.arange(T + 1).unsqueeze(0).repeat(
-            agent_feat.shape[0], 1).to(agent_feat.device)
-        traj_pos_embed = self.traj_hist_position_emb(agent_hist_positions)
-        agent_feat = agent_feat + traj_pos_embed
 
         # 2. temo net for agent time self attention
         for agent_tempo_blk in self.agent_tempo_net:
@@ -135,13 +136,12 @@ class AgentEncoder(nn.Module):
             [torch.cos(x_angles), torch.sin(x_angles)], dim=-1)
         # x_angles = x_angles.unsqueeze(-1)
         x_pos_feat = torch.cat([x_positions, x_angles], dim=-1)  # [B, N, 4]
-        x_pos_embed = self.agent_pos_embed(
-            x_pos_feat.reshape(B * N, -1)[~agent_padding_mask])
-        x_pos_embed_tmp = torch.zeros(B * N,
-                                      agent_feat.shape[-1],
-                                      device=agent_feat.device)
-        x_pos_embed_tmp[~agent_padding_mask] = x_pos_embed
-        x_pos_embed = x_pos_embed_tmp.reshape(B, N, -1)
+        x_pos_embed = self.agent_pos_embed(x_pos_feat)
+        # x_pos_embed_tmp = torch.zeros(B * N,
+        #                               agent_feat.shape[-1],
+        #                               device=agent_feat.device)
+        # x_pos_embed_tmp[~agent_padding_mask] = x_pos_embed
+        # x_pos_embed = x_pos_embed_tmp.reshape(B, N, -1)
         agent_feat = agent_feat + x_pos_embed
         agent_feat = agent_feat.reshape(B, N, -1)
 

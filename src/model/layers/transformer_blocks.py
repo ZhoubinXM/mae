@@ -54,12 +54,19 @@ class MLPLayer(nn.Module):
                  act_layer=nn.ReLU,
                  norm_layer=nn.LayerNorm) -> None:
         super(MLPLayer, self).__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            norm_layer(hidden_dim),
-            act_layer(),
-            nn.Linear(hidden_dim, output_dim),
-        )
+        if norm_layer is not None:
+            self.mlp = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                norm_layer(hidden_dim),
+                act_layer(),
+                nn.Linear(hidden_dim, output_dim),
+            )
+        else:
+            self.mlp = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                act_layer(),
+                nn.Linear(hidden_dim, output_dim),
+            )
         self.apply(weight_init)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

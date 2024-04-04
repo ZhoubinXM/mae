@@ -25,7 +25,7 @@ class LaneEncoder(nn.Module):
 
         category_input_dim = 5
         intersection_dim = 2
-        lane_history_steps = 21
+        lane_history_steps = 20
         input_dim = 3
         lane_pos_input_dim = 4
 
@@ -57,7 +57,8 @@ class LaneEncoder(nn.Module):
         
         self.lane_pos_embed = MLPLayer(input_dim=lane_pos_input_dim,
                                         hidden_dim=hidden_dim,
-                                        output_dim=hidden_dim,)
+                                        output_dim=hidden_dim,
+                                        norm_layer=None)
 
         self.apply(weight_init)
 
@@ -131,12 +132,12 @@ class LaneEncoder(nn.Module):
             [torch.cos(lane_angles),
              torch.sin(lane_angles)], dim=-1)
         lane_pos_feat = torch.cat([lane_centers, lane_angles], dim=-1)
-        lane_pos_embed = self.lane_pos_embed(lane_pos_feat.reshape(B*M, -1)[~lane_padding_mask])
-        lane_pos_embed_tmp = torch.zeros(B * M,
-                                      lane_actor_feat.shape[-1],
-                                      device=lane_actor_feat.device)
-        lane_pos_embed_tmp[~lane_padding_mask] = lane_pos_embed
-        lane_pos_embed = lane_pos_embed_tmp.reshape(B, M, -1)
+        lane_pos_embed = self.lane_pos_embed(lane_pos_feat)
+        # lane_pos_embed_tmp = torch.zeros(B * M,
+        #                               lane_actor_feat.shape[-1],
+        #                               device=lane_actor_feat.device)
+        # lane_pos_embed_tmp[~lane_padding_mask] = lane_pos_embed
+        # lane_pos_embed = lane_pos_embed_tmp.reshape(B, M, -1)
         lane_actor_feat = lane_actor_feat + lane_pos_embed
 
         return lane_actor_feat
