@@ -127,13 +127,13 @@ class SceneDecoder(nn.Module):
 
         self.to_loc_propose_pos = MLPLayer(
             input_dim=hidden_dim,
-            hidden_dim=hidden_dim*4,
+            hidden_dim=hidden_dim * 4,
             output_dim=future_steps * 2 // self.num_recurrent_steps,
         )
 
         self.to_loc_refine_pos = MLPLayer(
             input_dim=hidden_dim,
-            hidden_dim=hidden_dim*4,
+            hidden_dim=hidden_dim * 4,
             output_dim=future_steps * 2,
         )
 
@@ -156,7 +156,7 @@ class SceneDecoder(nn.Module):
 
         self.prob_decoder = MLPLayer(
             input_dim=hidden_dim,
-            hidden_dim=hidden_dim*4,
+            hidden_dim=hidden_dim * 4,
             output_dim=1,
         )
 

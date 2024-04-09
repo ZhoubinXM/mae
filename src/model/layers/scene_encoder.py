@@ -23,18 +23,18 @@ class SceneEncoder(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.spa_net = nn.ModuleList(
-            Block(
-                dim=hidden_dim,
-                num_heads=num_head,
-                attn_drop=dropout,
-                post_norm=post_norm,
-                drop=dropout,
-                act_layer=act_layer,
-                norm_layer=norm_layer,
-                attn_bias=attn_bias,
-                ffn_bias=ffn_bias
-            ) for _ in range(spa_depth))
+        # self.spa_net = nn.ModuleList(
+        #     Block(
+        #         dim=hidden_dim,
+        #         num_heads=num_head,
+        #         attn_drop=dropout,
+        #         post_norm=post_norm,
+        #         drop=dropout,
+        #         act_layer=act_layer,
+        #         norm_layer=norm_layer,
+        #         attn_bias=attn_bias,
+        #         ffn_bias=ffn_bias
+        #     ) for _ in range(spa_depth))
         
         # self.scene_norm = norm_layer(hidden_dim)
         
@@ -45,8 +45,8 @@ class SceneEncoder(nn.Module):
         scene_padding_mask = torch.cat(
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
         
-        for blk in self.spa_net:
-            scene_feat = blk(scene_feat, key_padding_mask=scene_padding_mask)
+        # for blk in self.spa_net:
+        #     scene_feat = blk(scene_feat, key_padding_mask=scene_padding_mask)
 
         # scene_feat = self.scene_norm(scene_feat)
         
