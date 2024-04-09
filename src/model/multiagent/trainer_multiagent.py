@@ -80,6 +80,11 @@ class Trainer(pl.LightningModule):
         return self.net(data)
 
     def cal_loss(self, outputs, data):
+        use_clip = False
+        if len(outputs.keys()) == 5:
+            use_clip = True
+            clip_y_hat = outputs["clip_y_hat"]
+            clip_y_propose = outputs["clip_y_propose"]
         y_hat = outputs["y_hat"]
         pi = outputs["pi"]
         y_propose = outputs["y_propose"]
@@ -123,6 +128,10 @@ class Trainer(pl.LightningModule):
 
         reg_loss = F.smooth_l1_loss(y_hat_best[reg_mask], y[reg_mask])
         propose_reg_loss = F.smooth_l1_loss(y_propose_best[reg_mask],
+                                            y[reg_mask])
+        if use_clip and self.training:
+            reg_loss += F.smooth_l1_loss(clip_y_hat[reg_mask], y[reg_mask])
+            propose_reg_loss += F.smooth_l1_loss(clip_y_propose[reg_mask],
                                             y[reg_mask])
         # cls_loss = F.cross_entropy(
         #     pi.view(-1, pi.size(-1))[reg_mask.all(-1).view(-1)],

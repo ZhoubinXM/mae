@@ -33,6 +33,7 @@ class SceneDecoder(nn.Module):
         self.future_steps = future_steps
         self.num_recurrent_steps = num_recurrent_steps
         self.num_modes = num_modes
+        self.use_clip = True
 
         self.agent_traj_query = nn.Parameter(
             torch.randn(self.num_modes, hidden_dim))
@@ -79,6 +80,15 @@ class SceneDecoder(nn.Module):
                                dropout=0.0,
                                bidirectional=False)
         self.traj_emb_h0 = nn.Parameter(torch.zeros(1, hidden_dim))
+        if self.use_clip:
+            self.clip_traj_emb = nn.GRU(input_size=hidden_dim,
+                                        hidden_size=hidden_dim,
+                                        num_layers=1,
+                                        bias=True,
+                                        batch_first=False,
+                                        dropout=0.0,
+                                        bidirectional=False)
+            self.clip_traj_emb_h0 = nn.Parameter(torch.zeros(1, hidden_dim))
 
         if embedding_type == "fourier":
             num_freq_bands = 64
@@ -87,6 +97,12 @@ class SceneDecoder(nn.Module):
                 hidden_dim=hidden_dim,
                 num_freq_bands=num_freq_bands,
             )
+            if self.use_clip:
+                self.clip_y_emb = FourierEmbedding(
+                    input_dim=2,
+                    hidden_dim=hidden_dim,
+                    num_freq_bands=num_freq_bands,
+                )
         else:
             raise NotImplementedError(f"{embedding_type} is not implement!")
 
@@ -164,6 +180,7 @@ class SceneDecoder(nn.Module):
 
     def forward(self, data: dict, scene_feat: torch.Tensor,
                 agent_pos_emb: torch.Tensor):
+        self.num_modes = 6
         B, N, D = agent_pos_emb.shape
         scene_padding_mask = torch.cat(
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
@@ -280,6 +297,130 @@ class SceneDecoder(nn.Module):
         scene_query = scene_query.reshape(B, self.num_modes, D)
 
         pi = self.prob_decoder(scene_query)
+
+        if self.use_clip and self.training:
+            traj_query = None
+            self.num_modes = 1
+            clip_traj_query = self.clip_y_emb(data['y'].reshape(
+                B * N, self.future_steps, -1))
+            clip_traj_query = clip_traj_query.reshape(B * N, self.future_steps,
+                                                      -1).transpose(0, 1)
+            clip_traj_query = self.clip_traj_emb(
+                clip_traj_query,
+                self.clip_traj_emb_h0.unsqueeze(1).repeat(
+                    1, clip_traj_query.size(1), 1))[1].squeeze(0)
+            clip_traj_query = clip_traj_query.reshape(B, N, -1)
+            locs_propose_pos: List[Optional[
+                torch.Tensor]] = [None] * self.num_recurrent_steps
+            # mode2scene
+            for t in range(self.num_recurrent_steps):
+                for i in range(0, len(self.cross_attender_propose), 2):
+                    # Mode&Agent2Scene
+                    clip_traj_query = self.cross_attender_propose[i](
+                        clip_traj_query,
+                        scene_feat,
+                        scene_feat,
+                        key_padding_mask=scene_padding_mask)
+                    clip_traj_query = clip_traj_query.reshape(B, N, D)
+
+
+                    mask = data["x_key_padding_mask"].unsqueeze(1).repeat(
+                        1, self.num_modes, 1,
+                        1).reshape(B, self.num_modes * N)
+
+                    clip_traj_query = self.cross_attender_propose[i + 1](
+                        clip_traj_query, key_padding_mask=mask)
+                    clip_traj_query = clip_traj_query.reshape(
+                        B, self.num_modes, N,
+                        D).permute(0, 2, 1, 3).reshape(B, N * self.num_modes,
+                                                       D)
+                # mode2mode
+                clip_traj_query = clip_traj_query.reshape(
+                    B * N, self.num_modes, D)
+                clip_traj_query = clip_traj_query[~agent_padding_mask]
+                clip_traj_query = self.mode2mode_propose(clip_traj_query)
+                traj_query_tmp = torch.zeros(B * N,
+                                             self.num_modes,
+                                             D,
+                                             device=clip_traj_query.device)
+                traj_query_tmp[~agent_padding_mask] = clip_traj_query
+                clip_traj_query = traj_query_tmp.reshape(
+                    B, N, self.num_modes, -1)
+
+                # propose and refine predict trajectory
+                locs_propose_pos[t] = self.to_loc_propose_pos(clip_traj_query)
+                clip_traj_query = clip_traj_query.reshape(
+                    B, N * self.num_modes, D)
+            loc_propose_pos = torch.cumsum(torch.cat(locs_propose_pos,
+                                                     dim=-1).reshape(
+                                                         -1, self.num_modes,
+                                                         self.future_steps, 2),
+                                           dim=-2)
+            clip_traj_query = self.y_emb(
+                torch.cat([loc_propose_pos.detach()],
+                          dim=-1).reshape(B * N * self.num_modes,
+                                          self.future_steps, 2))
+
+            clip_traj_query = clip_traj_query.reshape(B, N, self.num_modes,
+                                                      self.future_steps, D)
+            B, _, _, T, D = clip_traj_query.shape
+            clip_traj_query = clip_traj_query.reshape(B * N * self.num_modes,
+                                                      T, D).transpose(0, 1)
+            clip_traj_query = self.traj_emb(
+                clip_traj_query,
+                self.traj_emb_h0.unsqueeze(1).repeat(1,
+                                                     clip_traj_query.size(1),
+                                                     1))[1].squeeze(0)
+            clip_traj_query = clip_traj_query.reshape(B, N * self.num_modes, D)
+            for i in range(0, len(self.cross_attender_refine), 2):
+                clip_traj_query = self.cross_attender_refine[i](
+                    clip_traj_query,
+                    scene_feat,
+                    scene_feat,
+                    key_padding_mask=scene_padding_mask)
+
+                clip_traj_query = clip_traj_query.reshape(
+                    B, N, self.num_modes,
+                    D).permute(0, 2, 1, 3).reshape(B, self.num_modes * N, D)
+
+                mask = data["x_key_padding_mask"].unsqueeze(1).repeat(
+                    1, self.num_modes, 1, 1).reshape(B, self.num_modes * N)
+
+                clip_traj_query = self.cross_attender_refine[i + 1](
+                    clip_traj_query, key_padding_mask=mask)
+                clip_traj_query = clip_traj_query.reshape(
+                    B, self.num_modes, N,
+                    D).permute(0, 2, 1, 3).reshape(B, N * self.num_modes, D)
+
+            clip_traj_query = clip_traj_query.reshape(B * N, self.num_modes, D)
+            clip_traj_query = clip_traj_query[~agent_padding_mask]
+            clip_traj_query = self.mode2mode_refine(clip_traj_query)
+            traj_query_tmp = torch.zeros(B * N,
+                                         self.num_modes,
+                                         D,
+                                         device=clip_traj_query.device)
+            traj_query_tmp[~agent_padding_mask] = clip_traj_query
+            clip_traj_query = traj_query_tmp.view(B, N * self.num_modes, D)
+
+            # decoder trajectory
+            clip_traj_query = clip_traj_query.reshape(B, N, self.num_modes, -1)
+            loc_refine_pos = self.to_loc_refine_pos(
+                clip_traj_query[:, :N]).reshape(-1, self.num_modes,
+                                                self.future_steps, 2)
+            loc_refine_pos = loc_refine_pos + loc_propose_pos.detach()
+
+            clip_y_hat = loc_refine_pos.reshape(B, N, self.num_modes,
+                                                self.future_steps, 2)
+            clip_traj_propose = loc_propose_pos.reshape(
+                B, N, self.num_modes, self.future_steps, 2)
+            
+            return {
+                "y_hat": y_hat,
+                "pi": pi,
+                "y_propose": traj_propose,
+                "clip_y_propose": clip_traj_propose.squeeze(2),
+                "clip_y_hat": clip_y_hat.squeeze(2),
+            }
 
         return {
             "y_hat": y_hat,
