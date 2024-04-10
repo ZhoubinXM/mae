@@ -165,8 +165,11 @@ class SceneDecoder(nn.Module):
     def forward(self, data: dict, scene_feat: torch.Tensor,
                 agent_pos_emb: torch.Tensor):
         B, N, D = agent_pos_emb.shape
-        scene_padding_mask = torch.cat(
-            [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
+        scene_padding_mask = torch.cat([
+            data["x_key_padding_mask"], data["lane_padding_mask"].reshape(
+                scene_feat.shape[0], -1)
+        ],
+                                       dim=1)
         agent_padding_mask = data["x_key_padding_mask"].reshape(B * N)
         traj_query: torch.Tensor = (
             self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(
