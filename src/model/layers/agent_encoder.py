@@ -42,7 +42,7 @@ class AgentEncoder(nn.Module):
         else:
             raise NotImplementedError(f"{embedding_type} is not implement!")
 
-        self.agent_tempo_query = nn.Parameter(torch.randn(1, hidden_dim))
+        # self.agent_tempo_query = nn.Parameter(torch.randn(1, hidden_dim))
         self.agent_tempo_net = nn.ModuleList(
             Block(
                 dim=hidden_dim,
@@ -106,14 +106,14 @@ class AgentEncoder(nn.Module):
         traj_pos_embed = self.traj_hist_position_emb(agent_hist_positions)
         agent_feat = agent_feat + traj_pos_embed
 
-        agent_tempo_query = self.agent_tempo_query[None, :, :].repeat(
-            agent_feat.shape[0], 1, 1)
-        agent_feat = torch.cat([agent_tempo_query, agent_feat], dim=1)
-        agent_hist_padding_mask = torch.cat([
-            torch.zeros([B * N, 1]).to(agent_hist_padding_mask.dtype).to(
-                agent_hist_padding_mask.device), agent_hist_padding_mask
-        ],
-                                            dim=1)
+        # agent_tempo_query = self.agent_tempo_query[None, :, :].repeat(
+        #     agent_feat.shape[0], 1, 1)
+        # agent_feat = torch.cat([agent_tempo_query, agent_feat], dim=1)
+        # agent_hist_padding_mask = torch.cat([
+        #     torch.zeros([B * N, 1]).to(agent_hist_padding_mask.dtype).to(
+        #         agent_hist_padding_mask.device), agent_hist_padding_mask
+        # ],
+        #                                     dim=1)
 
         # 2. temo net for agent time self attention
         for agent_tempo_blk in self.agent_tempo_net:
@@ -124,18 +124,19 @@ class AgentEncoder(nn.Module):
 
         # 3. pooling
         agent_feat_tmp = torch.zeros(B * N,
+                                     T,
                                      agent_feat.shape[-1],
                                      device=agent_feat.device)
 
-        agent_feat_tmp[~agent_padding_mask] = agent_feat[:, 0]
-        agent_feat = agent_feat_tmp.reshape(B, N, agent_feat.shape[-1])
+        agent_feat_tmp[~agent_padding_mask] = agent_feat
+        agent_feat = agent_feat_tmp.reshape(B, N, T, agent_feat.shape[-1])
 
-        x_positions = data["x_positions"][:, :, 49]  # [B, N, 2]
-        x_angles = data["x_angles"][:, :, 49]  # [B, N]
+        x_positions = data["x_positions"][:, :, :50]  # [B, N, T, 2]
+        x_angles = data["x_angles"][:, :, :50]  # [B, N, T]
         x_angles = torch.stack(
             [torch.cos(x_angles), torch.sin(x_angles)], dim=-1)
         # x_angles = x_angles.unsqueeze(-1)
-        x_pos_feat = torch.cat([x_positions, x_angles], dim=-1)  # [B, N, 4]
+        x_pos_feat = torch.cat([x_positions, x_angles], dim=-1)  # [B, N, T, 4]
         x_pos_embed = self.agent_pos_embed(x_pos_feat)
         # x_pos_embed_tmp = torch.zeros(B * N,
         #                               agent_feat.shape[-1],
@@ -143,6 +144,6 @@ class AgentEncoder(nn.Module):
         # x_pos_embed_tmp[~agent_padding_mask] = x_pos_embed
         # x_pos_embed = x_pos_embed_tmp.reshape(B, N, -1)
         agent_feat = agent_feat + x_pos_embed
-        agent_feat = agent_feat.reshape(B, N, -1)
+        agent_feat = agent_feat.reshape(B, N, T, -1)
 
         return agent_feat, x_pos_embed
