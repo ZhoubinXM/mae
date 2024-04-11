@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+      {
+          "label": "run shell script",
+          "type": "shell",
+          "command": "rm -rf ${workspaceFolder}/outputs/debug",
+          "problemMatcher": []
+      }
+  ]
+}

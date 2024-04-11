@@ -51,15 +51,15 @@ class SceneDecoder(nn.Module):
                                    attn_bias=attn_bias,
                                    ffn_bias=ffn_bias))
             self.cross_attender_propose.append(
-                Block(dim=hidden_dim,
-                      num_heads=num_head,
-                      attn_drop=dropout,
-                      post_norm=post_norm,
-                      drop=dropout,
-                      act_layer=act_layer,
-                      norm_layer=norm_layer,
-                      attn_bias=attn_bias,
-                      ffn_bias=ffn_bias))
+                CrossAttenderBlock(dim=hidden_dim,
+                                   num_heads=num_head,
+                                   attn_drop=dropout,
+                                   post_norm=post_norm,
+                                   drop=dropout,
+                                   act_layer=act_layer,
+                                   norm_layer=norm_layer,
+                                   attn_bias=attn_bias,
+                                   ffn_bias=ffn_bias))
 
         self.mode2mode_propose = Block(dim=hidden_dim,
                                        num_heads=num_head,
@@ -105,15 +105,15 @@ class SceneDecoder(nn.Module):
                                    attn_bias=attn_bias,
                                    ffn_bias=ffn_bias))
             self.cross_attender_refine.append(
-                Block(dim=hidden_dim,
-                      num_heads=num_head,
-                      attn_drop=dropout,
-                      post_norm=post_norm,
-                      drop=dropout,
-                      act_layer=act_layer,
-                      norm_layer=norm_layer,
-                      attn_bias=attn_bias,
-                      ffn_bias=ffn_bias))
+                CrossAttenderBlock(dim=hidden_dim,
+                                   num_heads=num_head,
+                                   attn_drop=dropout,
+                                   post_norm=post_norm,
+                                   drop=dropout,
+                                   act_layer=act_layer,
+                                   norm_layer=norm_layer,
+                                   attn_bias=attn_bias,
+                                   ffn_bias=ffn_bias))
 
         self.mode2mode_refine = Block(dim=hidden_dim,
                                       num_heads=num_head,
@@ -163,15 +163,16 @@ class SceneDecoder(nn.Module):
         self.apply(weight_init)
 
     def forward(self, data: dict, scene_feat: torch.Tensor,
-                agent_pos_emb: torch.Tensor):
+                agent_pos_emb: torch.Tensor, scene_pos_embed):
         B, N, D = agent_pos_emb.shape
         scene_padding_mask = torch.cat(
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
         agent_padding_mask = data["x_key_padding_mask"].reshape(B * N)
         traj_query: torch.Tensor = (
-            self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(
-                B, N, 1, 1) + scene_feat[:, :N].unsqueeze(2) +
-            agent_pos_emb.unsqueeze(2)).reshape(B, N * self.num_modes, D)
+            self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(B, N, 1, 1)
+            + scene_feat[:, :N].unsqueeze(2)).reshape(B, N * self.num_modes, D)
+        agent_pos_emb_mode = agent_pos_emb.unsqueeze(2).repeat(
+            1, 1, self.num_modes, 1).reshape(B, N * self.num_modes, D)
 
         locs_propose_pos: List[Optional[
             torch.Tensor]] = [None] * self.num_recurrent_steps
@@ -180,8 +181,8 @@ class SceneDecoder(nn.Module):
             for i in range(0, len(self.cross_attender_propose), 2):
                 # Mode&Agent2Scene
                 traj_query = self.cross_attender_propose[i](
-                    traj_query,
-                    scene_feat,
+                    traj_query + agent_pos_emb_mode,
+                    scene_feat + scene_pos_embed,
                     scene_feat,
                     key_padding_mask=scene_padding_mask)
                 traj_query = traj_query.reshape(B, N, self.num_modes,
@@ -192,7 +193,10 @@ class SceneDecoder(nn.Module):
                     1, self.num_modes, 1, 1).reshape(B, self.num_modes * N)
 
                 traj_query = self.cross_attender_propose[i + 1](
-                    traj_query, key_padding_mask=mask)
+                    traj_query + agent_pos_emb_mode,
+                    traj_query + agent_pos_emb_mode,
+                    traj_query,
+                    key_padding_mask=mask)
                 traj_query = traj_query.reshape(B, self.num_modes, N,
                                                 D).permute(0, 2, 1, 3).reshape(
                                                     B, N * self.num_modes, D)
@@ -232,8 +236,8 @@ class SceneDecoder(nn.Module):
         traj_query = traj_query.reshape(B, N * self.num_modes, D)
         for i in range(0, len(self.cross_attender_refine), 2):
             traj_query = self.cross_attender_refine[i](
-                traj_query,
-                scene_feat,
+                traj_query + agent_pos_emb_mode,
+                scene_feat + scene_pos_embed,
                 scene_feat,
                 key_padding_mask=scene_padding_mask)
 
@@ -244,7 +248,10 @@ class SceneDecoder(nn.Module):
                 1, self.num_modes, 1, 1).reshape(B, self.num_modes * N)
 
             traj_query = self.cross_attender_refine[i + 1](
-                traj_query, key_padding_mask=mask)
+                traj_query + agent_pos_emb_mode,
+                traj_query + agent_pos_emb_mode,
+                traj_query,
+                key_padding_mask=mask)
             traj_query = traj_query.reshape(B, self.num_modes, N, D).permute(
                 0, 2, 1, 3).reshape(B, N * self.num_modes, D)
 
@@ -275,8 +282,12 @@ class SceneDecoder(nn.Module):
 
         scene_query = self.scene_query.unsqueeze(0).unsqueeze(2).repeat(
             B, 1, 1, 1).reshape(B * self.num_modes, 1, D)
+        agent_pos_emb_mode = agent_pos_emb_mode.reshape(
+            B, N, self.num_modes,
+            D).permute(0, 2, 1, 3).reshape(B * self.num_modes, N, D)
         for blk in self.scene_2_mode:
-            scene_query = blk(scene_query, traj_query, traj_query)
+            scene_query = blk(scene_query, traj_query + agent_pos_emb_mode,
+                              traj_query)
         scene_query = scene_query.reshape(B, self.num_modes, D)
 
         pi = self.prob_decoder(scene_query)

@@ -142,7 +142,7 @@ class AgentEncoder(nn.Module):
         #                               device=agent_feat.device)
         # x_pos_embed_tmp[~agent_padding_mask] = x_pos_embed
         # x_pos_embed = x_pos_embed_tmp.reshape(B, N, -1)
-        agent_feat = agent_feat + x_pos_embed
+        # agent_feat = agent_feat + x_pos_embed
         agent_feat = agent_feat.reshape(B, N, -1)
 
         return agent_feat, x_pos_embed
