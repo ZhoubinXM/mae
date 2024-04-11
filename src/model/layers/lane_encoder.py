@@ -141,3 +141,49 @@ class LaneEncoder(nn.Module):
         lane_actor_feat = lane_actor_feat + lane_pos_embed
 
         return lane_actor_feat
+
+
+class MLP(nn.Module):
+    def __init__(self, in_channels, hidden_unit, verbose=False):
+        super(MLP, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(in_channels, hidden_unit),
+            nn.LayerNorm(hidden_unit),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        x = self.mlp(x)
+        return x
+
+
+class LaneNet(nn.Module):
+    def __init__(self, in_channels, hidden_unit, num_subgraph_layers):
+        super(LaneNet, self).__init__()
+        self.num_subgraph_layers = num_subgraph_layers
+        self.layer_seq = nn.Sequential()
+        for i in range(num_subgraph_layers):
+            self.layer_seq.add_module(
+                f'lmlp_{i}', MLP(in_channels, hidden_unit))
+            in_channels = hidden_unit*2
+
+    def forward(self, pts_lane_feats):
+        '''
+            Extract lane_feature from vectorized lane representation
+
+        Args:
+            pts_lane_feats: [batch size, max_pnum, pts, D]
+
+        Returns:
+            inst_lane_feats: [batch size, max_pnum, D]
+        '''
+        x = pts_lane_feats
+        for name, layer in self.layer_seq.named_modules():
+            if isinstance(layer, MLP):
+                # x [bs,max_lane_num,9,dim]
+                x = layer(x)
+                x_max = torch.max(x, -2)[0]
+                x_max = x_max.unsqueeze(2).repeat(1, 1, x.shape[2], 1)
+                x = torch.cat([x, x_max], dim=-1)
+        x_max = torch.max(x, -2)[0]
+        return x_max

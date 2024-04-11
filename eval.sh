@@ -8,8 +8,8 @@
 #   test=True \
 
 python3 eval.py \
-  model=model_multiagent_mae \
+  model=model_multiagent \
   data_root="/data/jerome.zhou/prediction_dataset/av2" \
   batch_size=16 \
-  "checkpoint='./outputs/baseline_scene_query_scene/2024-04-01/15-01-10/checkpoints/last.ckpt'" \
-  test=False \
+  "checkpoint='./best_result/baseline_05_1.ckpt'" \
+  test=True \
