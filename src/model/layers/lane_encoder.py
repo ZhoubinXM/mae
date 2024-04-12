@@ -65,15 +65,17 @@ class LaneEncoder(nn.Module):
     def forward(self, data: dict):
         lane_pt_padding_mask: torch.Tensor = data["lane_padding_mask"]  # [B, M, L]
         B, M, L = lane_pt_padding_mask.shape
-        lane_vector = data["lane_positions"][:,:,1:] - data["lane_positions"][:,:,:-1]
-        lane_vector = torch.cat([torch.zeros(B,M,1,2).to(lane_vector.device), lane_vector], dim=2)
-        lane_angles = torch.arctan2(lane_vector[..., 1], lane_vector[..., 0])
+        lane_vector_diff = data["lane_positions"][:,:,1:] - data["lane_positions"][:,:,:-1]
+        lane_vector_dist = torch.norm(lane_vector_diff, p=2, dim=-1)
+        # lane_vector = torch.cat([torch.zeros(B,M,1,2).to(lane_vector.device), lane_vector], dim=2)
+        # lane_angles = torch.arctan2(lane_vector[..., 1], lane_vector[..., 0])
         # lane_angles_vector = torch.stack([lane_angles.cos(), lane_angles.sin()], dim=-1)
-
+        lane_vector = torch.cat([data["lane_positions"][:,:,:-1], data["lane_positions"][:,:,1:], lane_vector_dist], dim=-1)
+        
         lane_feat = torch.cat(
             [
                 lane_vector,
-                lane_angles.unsqueeze(-1),
+                # lane_angles.unsqueeze(-1),
             ],
             dim=-1,
         )  # [B, M, L, 2]
