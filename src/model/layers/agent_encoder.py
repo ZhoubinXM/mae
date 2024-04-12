@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from src.model.layers.fourier_embedding import FourierEmbedding
-from src.model.layers.transformer_blocks import Block, MLPLayer
+from src.model.layers.transformer_blocks import Block, MLPLayer, CrossAttenderBlock
 
 from src.utils.weight_init import weight_init
 
@@ -24,7 +24,7 @@ class AgentEncoder(nn.Module):
         super().__init__()
 
         category_input_dim = 5
-        agent_history_steps = 50
+        agent_history_steps = 51
         input_dim = 4
         agent_pos_input_dim = 4
 
@@ -44,7 +44,7 @@ class AgentEncoder(nn.Module):
 
         self.agent_tempo_query = nn.Parameter(torch.randn(1, hidden_dim))
         self.agent_tempo_net = nn.ModuleList(
-            Block(
+            CrossAttenderBlock(
                 dim=hidden_dim,
                 num_heads=num_head,
                 drop=dropout,
@@ -101,10 +101,10 @@ class AgentEncoder(nn.Module):
                                                  -1)[~agent_padding_mask]
             ])
 
-        agent_hist_positions = torch.arange(T).unsqueeze(0).repeat(
+        agent_hist_positions = torch.arange(T + 1).unsqueeze(0).repeat(
             agent_feat.shape[0], 1).to(agent_feat.device)
         traj_pos_embed = self.traj_hist_position_emb(agent_hist_positions)
-        agent_feat = agent_feat + traj_pos_embed
+        # agent_feat = agent_feat + traj_pos_embed
 
         agent_tempo_query = self.agent_tempo_query[None, :, :].repeat(
             agent_feat.shape[0], 1, 1)
@@ -118,6 +118,8 @@ class AgentEncoder(nn.Module):
         # 2. temo net for agent time self attention
         for agent_tempo_blk in self.agent_tempo_net:
             agent_feat = agent_tempo_blk(
+                agent_feat + traj_pos_embed,
+                agent_feat + traj_pos_embed,
                 agent_feat,
                 key_padding_mask=agent_hist_padding_mask[~agent_padding_mask],
             )
