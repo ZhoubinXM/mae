@@ -10,4 +10,4 @@ python train.py \
        tempo_embed_type=norm \
        epochs=60 \
        post_norm=False \
-       output=baseline_05_clip_1
+       output=baseline_05_clip_3

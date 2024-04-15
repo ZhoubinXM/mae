@@ -301,8 +301,12 @@ class SceneDecoder(nn.Module):
         if self.use_clip and self.training:
             traj_query = None
             self.num_modes = 1
-            clip_traj_query = self.clip_y_emb(data['y'].reshape(
-                B * N, self.future_steps, -1))
+            x = data['y'].reshape(B * N, self.future_steps, -1)
+            y_diff = torch.zeros(B * N, self.future_steps,
+                                 2).to(x.device).to(x.dtype)
+            y_diff[:, 1:] = x[:, 1:] - x[:, :-1]
+            y_diff[:, 0] = torch.zeros(B * N, 2).to(x.device).to(x.dtype)
+            clip_traj_query = self.clip_y_emb(y_diff)
             clip_traj_query = clip_traj_query.reshape(B * N, self.future_steps,
                                                       -1).transpose(0, 1)
             clip_traj_query = self.clip_traj_emb(
@@ -322,7 +326,6 @@ class SceneDecoder(nn.Module):
                         scene_feat,
                         key_padding_mask=scene_padding_mask)
                     clip_traj_query = clip_traj_query.reshape(B, N, D)
-
 
                     mask = data["x_key_padding_mask"].unsqueeze(1).repeat(
                         1, self.num_modes, 1,
@@ -413,7 +416,7 @@ class SceneDecoder(nn.Module):
                                                 self.future_steps, 2)
             clip_traj_propose = loc_propose_pos.reshape(
                 B, N, self.num_modes, self.future_steps, 2)
-            
+
             return {
                 "y_hat": y_hat,
                 "pi": pi,
