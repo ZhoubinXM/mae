@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import torch.nn as nn
+from src.model.layers.multihead import myMultiheadAttention
 
 
 def weight_init(m: nn.Module) -> None:
@@ -19,7 +20,7 @@ def weight_init(m: nn.Module) -> None:
     elif isinstance(m, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
         fan_in = m.in_channels / m.groups
         fan_out = m.out_channels / m.groups
-        bound = (6.0 / (fan_in + fan_out)) ** 0.5
+        bound = (6.0 / (fan_in + fan_out))**0.5
         nn.init.uniform_(m.weight, -bound, bound)
         if m.bias is not None:
             nn.init.zeros_(m.bias)
@@ -35,7 +36,7 @@ def weight_init(m: nn.Module) -> None:
         if m.in_proj_weight is not None:
             fan_in = m.embed_dim
             fan_out = m.embed_dim
-            bound = (6.0 / (fan_in + fan_out)) ** 0.5
+            bound = (6.0 / (fan_in + fan_out))**0.5
             nn.init.uniform_(m.in_proj_weight, -bound, bound)
         else:
             nn.init.xavier_uniform_(m.q_proj_weight)
@@ -50,6 +51,25 @@ def weight_init(m: nn.Module) -> None:
             nn.init.normal_(m.bias_k, mean=0.0, std=0.02)
         if m.bias_v is not None:
             nn.init.normal_(m.bias_v, mean=0.0, std=0.02)
+    elif isinstance(m, myMultiheadAttention):
+        if m.in_proj_weight is not None:
+            fan_in = m.d_model
+            fan_out = m.d_model
+            bound = (6.0 / (fan_in + fan_out))**0.5
+            nn.init.uniform_(m.in_proj_weight, -bound, bound)
+        else:
+            nn.init.xavier_uniform_(m.q_proj_weight)
+            nn.init.xavier_uniform_(m.k_proj_weight)
+            nn.init.xavier_uniform_(m.v_proj_weight)
+        if m.in_proj_bias is not None:
+            nn.init.zeros_(m.in_proj_bias)
+        nn.init.xavier_uniform_(m.out_proj.weight)
+        if m.out_proj.bias is not None:
+            nn.init.zeros_(m.out_proj.bias)
+        # if m.bias_k is not None:
+        #     nn.init.normal_(m.bias_k, mean=0.0, std=0.02)
+        # if m.bias_v is not None:
+        #     nn.init.normal_(m.bias_v, mean=0.0, std=0.02)
     elif isinstance(m, (nn.LSTM, nn.LSTMCell)):
         for name, param in m.named_parameters():
             if 'weight_ih' in name:
@@ -77,4 +97,3 @@ def weight_init(m: nn.Module) -> None:
                 nn.init.zeros_(param)
             elif 'bias_hh' in name:
                 nn.init.zeros_(param)
-                

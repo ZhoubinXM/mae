@@ -169,9 +169,9 @@ class SceneDecoder(nn.Module):
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
         agent_padding_mask = data["x_key_padding_mask"].reshape(B * N)
         traj_query: torch.Tensor = (
-            self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(
-                B, N, 1, 1) + scene_feat[:, :N].unsqueeze(2) +
-            agent_pos_emb.unsqueeze(2)).reshape(B, N * self.num_modes, D)
+            self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(B, N, 1, 1)
+            + scene_feat[:, :N].unsqueeze(2)).reshape(B, N * self.num_modes, D)
+        # + agent_pos_emb.unsqueeze(2))
 
         locs_propose_pos: List[Optional[
             torch.Tensor]] = [None] * self.num_recurrent_steps

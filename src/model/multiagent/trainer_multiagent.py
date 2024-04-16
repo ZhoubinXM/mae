@@ -9,6 +9,7 @@ from src.utils.optim import WarmupCosLR
 from src.utils.submission_av2_multiagent import SubmissionAv2MultiAgent
 
 from src.model.multiagent.model_multiagent import ModelMultiAgent
+from src.model.layers.multihead import myMultiheadAttention
 
 
 class Trainer(pl.LightningModule):
@@ -212,6 +213,7 @@ class Trainer(pl.LightningModule):
             nn.LSTM,
             nn.GRU,
             nn.GRUCell,
+            myMultiheadAttention,
         )
         blacklist_weight_modules = (
             nn.BatchNorm1d,
