@@ -12,4 +12,4 @@ python3 eval.py \
   data_root="/data/jerome.zhou/prediction_dataset/av2" \
   batch_size=16 \
   "checkpoint='./best_result/baseline_05_1.ckpt'" \
-  test=True \
+  test=False \
