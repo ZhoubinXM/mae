@@ -34,9 +34,13 @@ class SceneEncoder(nn.Module):
                   attn_bias=attn_bias,
                   ffn_bias=ffn_bias) for _ in range(spa_depth))
 
-        self.pos_embed = MLPLayer(input_dim=2,
+        self.pos_embed = MLPLayer(input_dim=4,
                                   hidden_dim=hidden_dim,
-                                  output_dim=1,
+                                  output_dim=hidden_dim,
+                                  norm_layer=None)
+        self.pos_neg_embed = MLPLayer(input_dim=4,
+                                  hidden_dim=hidden_dim,
+                                  output_dim=hidden_dim,
                                   norm_layer=None)
 
         # self.scene_norm = norm_layer(hidden_dim)
@@ -69,17 +73,22 @@ class SceneEncoder(nn.Module):
         pos_feat = torch.cat([x_pos_feat, lane_pos_feat], dim=1)
         x1 = pos_feat[..., :2].unsqueeze(2).repeat(1, 1, pos_feat.size(1), 1)
         x2 = pos_feat[..., :2].unsqueeze(1)
+        x = x1 - x2
         dist = torch.sqrt(((x1 - x2)**2).sum(-1))  # [B, N, N)]
         angle1 = pos_feat[..., 2].unsqueeze(2).repeat(1, 1, pos_feat.size(1))
         angle2 = pos_feat[..., 2].unsqueeze(1)
         angle_diff = angle1 - angle2
         rel_pos = torch.stack([dist, angle_diff], dim=-1)
-        rel_pos = self.pos_embed(rel_pos).squeeze(-1)  # [B, N, N]
+        rel_pos = torch.cat([x, rel_pos], dim=-1)
+        rel_pos = self.pos_embed(rel_pos) # [B, N, N]
+        rel_pos_neg = torch.stack([dist, -angle_diff], dim=-1)
+        rel_pos_neg = torch.cat([-x, rel_pos], dim=-1)
+        rel_pos_neg = self.pos_neg_embed(rel_pos_neg)  # [B, N, N]
 
         for blk in self.spa_net:
             scene_feat = blk(scene_feat,
                              key_padding_mask=scene_padding_mask,
-                             position_bias=rel_pos)
+                             position_bias=[rel_pos, rel_pos_neg])
 
         # scene_feat = self.scene_norm(scene_feat)
 

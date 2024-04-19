@@ -21,6 +21,7 @@ def _scaled_dot_product_attention(q,
     # out         (B * nhead, tgt_len, head_dim)
 
     B, Nt, E = q.shape
+    _, Ns, _ = k.shape
     q = q / math.sqrt(E)
 
     # (B, Nt, E) x (B, E, Ns) -> (B, Nt, Ns)
@@ -32,7 +33,12 @@ def _scaled_dot_product_attention(q,
         attn += attn_mask
 
     if position_bias is not None:
-        attn += position_bias
+        rel_q2p = position_bias[0].reshape(B, Nt*Ns, E)
+        # rel_p2k = position_bias[1].reshape(B, Nt*Ns, E)
+        q2p = torch.bmm(q, rel_q2p.transpose(-2, -1))
+        q2p_indices = torch.arange(Nt).unsqueeze(0).unsqueeze(2) * Nt + torch.arange(Ns)
+        q2p = q2p.gather(2, q2p_indices.unsqueeze(0).expand(B, Nt, Ns))
+        attn += q2p
 
     attn = F.softmax(attn, dim=-1)
 
@@ -266,9 +272,12 @@ class myMultiheadAttention(nn.Module):
             self.dropout = 0.0
 
         if position_bias is not None:
-            position_bias = position_bias.unsqueeze(1).repeat(
-                1, self.nhead, 1, 1).reshape(batch_size * self.nhead, tgt_len,
-                                             src_len)
+            position_bias[0] = position_bias[0].unsqueeze(1).repeat(
+                1, self.nhead, 1, 1, 1).reshape(batch_size * self.nhead, tgt_len,
+                                             src_len, embed_dim)
+            position_bias[1] = position_bias[1].unsqueeze(1).repeat(
+                1, self.nhead, 1, 1, 1).reshape(batch_size * self.nhead, tgt_len,
+                                             src_len, embed_dim)
 
         # (deep breath) calculate attention and out projection
         attn_output, attn_output_weights = _scaled_dot_product_attention(
