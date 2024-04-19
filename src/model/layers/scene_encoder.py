@@ -82,7 +82,7 @@ class SceneEncoder(nn.Module):
         rel_pos = torch.cat([x, rel_pos], dim=-1)
         rel_pos = self.pos_embed(rel_pos) # [B, N, N]
         rel_pos_neg = torch.stack([dist, -angle_diff], dim=-1)
-        rel_pos_neg = torch.cat([-x, rel_pos], dim=-1)
+        rel_pos_neg = torch.cat([-x, rel_pos_neg], dim=-1)
         rel_pos_neg = self.pos_neg_embed(rel_pos_neg)  # [B, N, N]
 
         for blk in self.spa_net:

@@ -53,7 +53,7 @@ def main(conf):
         accelerator="gpu",
         devices=conf.gpus,
         # strategy="ddp_find_unused_parameters_false",
-        strategy=DDPStrategy(find_unused_parameters=False, gradient_as_bucket_view=True),
+        strategy=DDPStrategy(find_unused_parameters=True, gradient_as_bucket_view=True),
         # strategy="ddp",
         # if conf.gpus > 1 else None,
         callbacks=callbacks,
