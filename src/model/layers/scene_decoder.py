@@ -51,15 +51,15 @@ class SceneDecoder(nn.Module):
                                    attn_bias=attn_bias,
                                    ffn_bias=ffn_bias))
             self.cross_attender_propose.append(
-                Block(dim=hidden_dim,
-                      num_heads=num_head,
-                      attn_drop=dropout,
-                      post_norm=post_norm,
-                      drop=dropout,
-                      act_layer=act_layer,
-                      norm_layer=norm_layer,
-                      attn_bias=attn_bias,
-                      ffn_bias=ffn_bias))
+                CrossAttenderBlock(dim=hidden_dim,
+                                   num_heads=num_head,
+                                   attn_drop=dropout,
+                                   post_norm=post_norm,
+                                   drop=dropout,
+                                   act_layer=act_layer,
+                                   norm_layer=norm_layer,
+                                   attn_bias=attn_bias,
+                                   ffn_bias=ffn_bias))
 
         self.mode2mode_propose = Block(dim=hidden_dim,
                                        num_heads=num_head,
@@ -105,15 +105,15 @@ class SceneDecoder(nn.Module):
                                    attn_bias=attn_bias,
                                    ffn_bias=ffn_bias))
             self.cross_attender_refine.append(
-                Block(dim=hidden_dim,
-                      num_heads=num_head,
-                      attn_drop=dropout,
-                      post_norm=post_norm,
-                      drop=dropout,
-                      act_layer=act_layer,
-                      norm_layer=norm_layer,
-                      attn_bias=attn_bias,
-                      ffn_bias=ffn_bias))
+                CrossAttenderBlock(dim=hidden_dim,
+                                   num_heads=num_head,
+                                   attn_drop=dropout,
+                                   post_norm=post_norm,
+                                   drop=dropout,
+                                   act_layer=act_layer,
+                                   norm_layer=norm_layer,
+                                   attn_bias=attn_bias,
+                                   ffn_bias=ffn_bias))
 
         self.mode2mode_refine = Block(dim=hidden_dim,
                                       num_heads=num_head,
@@ -163,15 +163,20 @@ class SceneDecoder(nn.Module):
         self.apply(weight_init)
 
     def forward(self, data: dict, scene_feat: torch.Tensor,
-                agent_pos_emb: torch.Tensor):
+                agent_pos_emb: torch.Tensor, lane_pos_embed: torch.Tensor):
         B, N, D = agent_pos_emb.shape
         scene_padding_mask = torch.cat(
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
         agent_padding_mask = data["x_key_padding_mask"].reshape(B * N)
+        pos_embed = torch.cat([agent_pos_emb, lane_pos_embed], dim=1)
         traj_query: torch.Tensor = (
             self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(
-                B, N, 1, 1) + scene_feat[:, :N].unsqueeze(2) +
-            agent_pos_emb.unsqueeze(2)).reshape(B, N * self.num_modes, D)
+                B, N, 1, 1)).reshape(B, N * self.num_modes, D)
+        agent_pos_emb = agent_pos_emb.unsqueeze(2).repeat(
+            1, 1, self.num_modes, 1).reshape(B, N * self.num_modes, D)
+        # pos_embed = pos_embed.unsqueeze(2).repeat(1, 1,
+        #                                           1).reshape(
+        #                                               B, pos_embed.size(1), D)
 
         locs_propose_pos: List[Optional[
             torch.Tensor]] = [None] * self.num_recurrent_steps
@@ -180,22 +185,31 @@ class SceneDecoder(nn.Module):
             for i in range(0, len(self.cross_attender_propose), 2):
                 # Mode&Agent2Scene
                 traj_query = self.cross_attender_propose[i](
-                    traj_query,
-                    scene_feat,
+                    traj_query + agent_pos_emb,
+                    scene_feat + pos_embed,
                     scene_feat,
                     key_padding_mask=scene_padding_mask)
                 traj_query = traj_query.reshape(B, N, self.num_modes,
                                                 D).permute(0, 2, 1, 3).reshape(
                                                     B, self.num_modes * N, D)
+                agent_pos_emb = agent_pos_emb.reshape(
+                    B, N, self.num_modes,
+                    D).permute(0, 2, 1, 3).reshape(B, self.num_modes * N, D)
 
                 mask = data["x_key_padding_mask"].unsqueeze(1).repeat(
                     1, self.num_modes, 1, 1).reshape(B, self.num_modes * N)
 
                 traj_query = self.cross_attender_propose[i + 1](
-                    traj_query, key_padding_mask=mask)
+                    traj_query + agent_pos_emb,
+                    traj_query + agent_pos_emb,
+                    traj_query,
+                    key_padding_mask=mask)
                 traj_query = traj_query.reshape(B, self.num_modes, N,
                                                 D).permute(0, 2, 1, 3).reshape(
                                                     B, N * self.num_modes, D)
+                agent_pos_emb = agent_pos_emb.reshape(
+                    B, self.num_modes, N,
+                    D).permute(0, 2, 1, 3).reshape(B, N * self.num_modes, D)
             # mode2mode
             traj_query = traj_query.reshape(B * N, self.num_modes, D)
             traj_query = traj_query[~agent_padding_mask]
@@ -230,23 +244,33 @@ class SceneDecoder(nn.Module):
             self.traj_emb_h0.unsqueeze(1).repeat(1, traj_query.size(1),
                                                  1))[1].squeeze(0)
         traj_query = traj_query.reshape(B, N * self.num_modes, D)
+        agent_pos_emb = agent_pos_emb.reshape(B, N * self.num_modes, D)
         for i in range(0, len(self.cross_attender_refine), 2):
             traj_query = self.cross_attender_refine[i](
-                traj_query,
-                scene_feat,
+                traj_query + agent_pos_emb,
+                scene_feat + pos_embed,
                 scene_feat,
                 key_padding_mask=scene_padding_mask)
 
             traj_query = traj_query.reshape(B, N, self.num_modes, D).permute(
                 0, 2, 1, 3).reshape(B, self.num_modes * N, D)
+            agent_pos_emb = agent_pos_emb.reshape(
+                B, N, self.num_modes,
+                D).permute(0, 2, 1, 3).reshape(B, self.num_modes * N, D)
 
             mask = data["x_key_padding_mask"].unsqueeze(1).repeat(
                 1, self.num_modes, 1, 1).reshape(B, self.num_modes * N)
 
             traj_query = self.cross_attender_refine[i + 1](
-                traj_query, key_padding_mask=mask)
+                traj_query + agent_pos_emb,
+                traj_query + agent_pos_emb,
+                traj_query,
+                key_padding_mask=mask)
             traj_query = traj_query.reshape(B, self.num_modes, N, D).permute(
                 0, 2, 1, 3).reshape(B, N * self.num_modes, D)
+            agent_pos_emb = agent_pos_emb.reshape(
+                B, self.num_modes, N,
+                D).permute(0, 2, 1, 3).reshape(B, N * self.num_modes, D)
 
         traj_query = traj_query.reshape(B * N, self.num_modes, D)
         traj_query = traj_query[~agent_padding_mask]

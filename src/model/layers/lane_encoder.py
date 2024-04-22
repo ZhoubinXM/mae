@@ -35,10 +35,11 @@ class LaneEncoder(nn.Module):
 
         if embedding_type == "fourier":
             num_freq_bands: int = 64
-            self.lane_projection = FourierEmbedding(input_dim=input_dim,
-                                              hidden_dim=hidden_dim,
-                                              num_freq_bands=num_freq_bands,
-                                              norm_layer=norm_layer)
+            self.lane_projection = FourierEmbedding(
+                input_dim=input_dim,
+                hidden_dim=hidden_dim,
+                num_freq_bands=num_freq_bands,
+                norm_layer=norm_layer)
         else:
             raise NotImplementedError(f"{embedding_type} is not implement!")
 
@@ -54,19 +55,23 @@ class LaneEncoder(nn.Module):
                 attn_bias=attn_bias,
                 ffn_bias=ffn_bias,
             ) for _ in range(tempo_depth))
-        
+
         self.lane_pos_embed = MLPLayer(input_dim=lane_pos_input_dim,
-                                        hidden_dim=hidden_dim,
-                                        output_dim=hidden_dim,
-                                        norm_layer=None)
+                                       hidden_dim=hidden_dim,
+                                       output_dim=hidden_dim,
+                                       norm_layer=None)
 
         self.apply(weight_init)
 
     def forward(self, data: dict):
-        lane_pt_padding_mask: torch.Tensor = data["lane_padding_mask"]  # [B, M, L]
+        lane_pt_padding_mask: torch.Tensor = data[
+            "lane_padding_mask"]  # [B, M, L]
         B, M, L = lane_pt_padding_mask.shape
-        lane_vector = data["lane_positions"][:,:,1:] - data["lane_positions"][:,:,:-1]
-        lane_vector = torch.cat([torch.zeros(B,M,1,2).to(lane_vector.device), lane_vector], dim=2)
+        lane_vector = data["lane_positions"][:, :, 1:] - data[
+            "lane_positions"][:, :, :-1]
+        lane_vector = torch.cat(
+            [torch.zeros(B, M, 1, 2).to(lane_vector.device), lane_vector],
+            dim=2)
         lane_angles = torch.arctan2(lane_vector[..., 1], lane_vector[..., 0])
         # lane_angles_vector = torch.stack([lane_angles.cos(), lane_angles.sin()], dim=-1)
 
@@ -83,13 +88,13 @@ class LaneEncoder(nn.Module):
         lane_pt_padding_mask = lane_pt_padding_mask.view(-1, L)
         lane_padding_mask = data['lane_key_padding_mask'].reshape(B * M)
 
-        lane_categorical_embeds = torch.stack([
-            self.lane_category_emb(data["lane_attr"][..., 0].long()),
-            self.lane_intersect_emb(data["lane_attr"][..., -1].long())
-        ],
-                                            dim=0).sum(dim=0).unsqueeze(2).repeat(
-                                                1, 1, L,
-                                                1).reshape(B * M, L, -1)
+        lane_categorical_embeds = torch.stack(
+            [
+                self.lane_category_emb(data["lane_attr"][..., 0].long()),
+                self.lane_intersect_emb(data["lane_attr"][..., -1].long())
+            ],
+            dim=0).sum(dim=0).unsqueeze(2).repeat(1, 1, L,
+                                                  1).reshape(B * M, L, -1)
 
         lane_actor_feat: torch.Tensor = self.lane_projection(
             lane_feat[~lane_padding_mask],
@@ -102,8 +107,8 @@ class LaneEncoder(nn.Module):
             torch.zeros([B * M, 1]).to(lane_padding_mask.dtype).to(
                 lane_padding_mask.device), lane_pt_padding_mask
         ],
-                                      dim=1)
-        
+                                         dim=1)
+
         # lane_pt_positions = torch.arange(L+1).unsqueeze(0).repeat(
         #     lane_actor_feat.shape[0], 1).to(lane_actor_feat.device)
         # lane_pos_embed = self.lane_position_emb(lane_pt_positions)
@@ -138,19 +143,17 @@ class LaneEncoder(nn.Module):
         #                               device=lane_actor_feat.device)
         # lane_pos_embed_tmp[~lane_padding_mask] = lane_pos_embed
         # lane_pos_embed = lane_pos_embed_tmp.reshape(B, M, -1)
-        lane_actor_feat = lane_actor_feat + lane_pos_embed
+        # lane_actor_feat = lane_actor_feat + lane_pos_embed
 
-        return lane_actor_feat
+        return lane_actor_feat, lane_pos_embed
 
 
 class MLP(nn.Module):
+
     def __init__(self, in_channels, hidden_unit, verbose=False):
         super(MLP, self).__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(in_channels, hidden_unit),
-            nn.LayerNorm(hidden_unit),
-            nn.ReLU()
-        )
+        self.mlp = nn.Sequential(nn.Linear(in_channels, hidden_unit),
+                                 nn.LayerNorm(hidden_unit), nn.ReLU())
 
     def forward(self, x):
         x = self.mlp(x)
@@ -158,14 +161,15 @@ class MLP(nn.Module):
 
 
 class LaneNet(nn.Module):
+
     def __init__(self, in_channels, hidden_unit, num_subgraph_layers):
         super(LaneNet, self).__init__()
         self.num_subgraph_layers = num_subgraph_layers
         self.layer_seq = nn.Sequential()
         for i in range(num_subgraph_layers):
-            self.layer_seq.add_module(
-                f'lmlp_{i}', MLP(in_channels, hidden_unit))
-            in_channels = hidden_unit*2
+            self.layer_seq.add_module(f'lmlp_{i}', MLP(in_channels,
+                                                       hidden_unit))
+            in_channels = hidden_unit * 2
 
     def forward(self, pts_lane_feats):
         '''
