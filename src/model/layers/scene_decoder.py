@@ -296,11 +296,13 @@ class SceneDecoder(nn.Module):
         # Scene scoring module using cross attention
         traj_query = traj_query.reshape(B, N, self.num_modes, -1).permute(
             0, 2, 1, 3).reshape(B * self.num_modes, N, -1)
+        agent_pos_emb = agent_pos_emb.reshape(B, N, self.num_modes, -1).permute(
+            0, 2, 1, 3).reshape(B * self.num_modes, N, -1)
 
         scene_query = self.scene_query.unsqueeze(0).unsqueeze(2).repeat(
             B, 1, 1, 1).reshape(B * self.num_modes, 1, D)
         for blk in self.scene_2_mode:
-            scene_query = blk(scene_query, traj_query, traj_query)
+            scene_query = blk(scene_query, traj_query+agent_pos_emb, traj_query)
         scene_query = scene_query.reshape(B, self.num_modes, D)
 
         pi = self.prob_decoder(scene_query)
