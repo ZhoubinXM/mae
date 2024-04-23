@@ -55,12 +55,12 @@ class AgentEncoder(nn.Module):
                 ffn_bias=ffn_bias,
             ) for _ in range(tempo_depth))
 
-        self.agent_pos_embed = MLPLayer(
-            input_dim=agent_pos_input_dim,
-            hidden_dim=hidden_dim,
-            output_dim=hidden_dim,
-            norm_layer=None,
-        )
+        # self.agent_pos_embed = MLPLayer(
+        #     input_dim=agent_pos_input_dim,
+        #     hidden_dim=hidden_dim,
+        #     output_dim=hidden_dim,
+        #     norm_layer=None,
+        # )
 
         self.apply(weight_init)
 
@@ -130,19 +130,19 @@ class AgentEncoder(nn.Module):
         agent_feat_tmp[~agent_padding_mask] = agent_feat[:, 0]
         agent_feat = agent_feat_tmp.reshape(B, N, agent_feat.shape[-1])
 
-        x_positions = data["x_positions"][:, :, 49]  # [B, N, 2]
-        x_angles = data["x_angles"][:, :, 49]  # [B, N]
-        x_angles = torch.stack(
-            [torch.cos(x_angles), torch.sin(x_angles)], dim=-1)
-        # x_angles = x_angles.unsqueeze(-1)
-        x_pos_feat = torch.cat([x_positions, x_angles], dim=-1)  # [B, N, 4]
-        x_pos_embed = self.agent_pos_embed(x_pos_feat)
-        # x_pos_embed_tmp = torch.zeros(B * N,
-        #                               agent_feat.shape[-1],
-        #                               device=agent_feat.device)
-        # x_pos_embed_tmp[~agent_padding_mask] = x_pos_embed
-        # x_pos_embed = x_pos_embed_tmp.reshape(B, N, -1)
-        agent_feat = agent_feat + x_pos_embed
-        agent_feat = agent_feat.reshape(B, N, -1)
+        # x_positions = data["x_positions"][:, :, 49]  # [B, N, 2]
+        # x_angles = data["x_angles"][:, :, 49]  # [B, N]
+        # x_angles = torch.stack(
+        #     [torch.cos(x_angles), torch.sin(x_angles)], dim=-1)
+        # # x_angles = x_angles.unsqueeze(-1)
+        # x_pos_feat = torch.cat([x_positions, x_angles], dim=-1)  # [B, N, 4]
+        # x_pos_embed = self.agent_pos_embed(x_pos_feat)
+        # # x_pos_embed_tmp = torch.zeros(B * N,
+        # #                               agent_feat.shape[-1],
+        # #                               device=agent_feat.device)
+        # # x_pos_embed_tmp[~agent_padding_mask] = x_pos_embed
+        # # x_pos_embed = x_pos_embed_tmp.reshape(B, N, -1)
+        # agent_feat = agent_feat + x_pos_embed
+        # agent_feat = agent_feat.reshape(B, N, -1)
 
-        return agent_feat, x_pos_embed
+        return agent_feat

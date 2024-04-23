@@ -8,14 +8,17 @@ from torch import Tensor
 from src.model.layers.relative_position_bias import RelativePositionBias
 from src.utils.weight_init import weight_init
 
+
 class RMSNorm(nn.Module):
+
     def __init__(self, dim):
         super().__init__()
-        self.scale = dim ** 0.5
+        self.scale = dim**0.5
         self.g = nn.Parameter(torch.ones(dim))
 
     def forward(self, x):
-        return F.normalize(x, dim = -1) * self.scale * self.g
+        return F.normalize(x, dim=-1) * self.scale * self.g
+
 
 class Mlp(nn.Module):
     """MLP as used in Vision Transformer, MLP-Mixer and related networks"""
@@ -47,9 +50,12 @@ class Mlp(nn.Module):
         x = self.drop2(x)
         return x
 
+
 class MLPLayer(nn.Module):
 
-    def __init__(self, input_dim: int, hidden_dim: int,
+    def __init__(self,
+                 input_dim: int,
+                 hidden_dim: int,
                  output_dim: int,
                  act_layer=nn.ReLU,
                  norm_layer=nn.LayerNorm) -> None:
@@ -91,12 +97,13 @@ class Block(nn.Module):
         max_t_len=50,
         attn_bias=True,
         ffn_bias=True,
+        use_simpl=False,
     ):
         super().__init__()
         self.post_norm = post_norm
         self.freqs_cis = None
 
-        self.norm1 = norm_layer(dim)
+        self.norm1 = norm_layer(dim)    
         if attn_type == "norm":
             self.attn = torch.nn.MultiheadAttention(
                 dim,
@@ -118,8 +125,9 @@ class Block(nn.Module):
                                          dim=dim,
                                          qkv_bias=qkv_bias,
                                          dropout=attn_drop)
-            self.freqs_cis = precompute_freqs_cis(dim // num_heads, end=max_t_len)
-            
+            self.freqs_cis = precompute_freqs_cis(dim // num_heads,
+                                                  end=max_t_len)
+
         self.drop_path1 = DropPath(
             drop_path) if drop_path > 0.0 else nn.Identity()
 
@@ -133,18 +141,47 @@ class Block(nn.Module):
         )
         self.drop_path2 = DropPath(
             drop_path) if drop_path > 0.0 else nn.Identity()
+        if use_simpl:
+            self.normq = norm_layer(dim)
+            self.proj_memory = nn.Sequential(nn.Linear(dim * 3, dim),
+                                            nn.LayerNorm(dim),
+                                            nn.ReLU(inplace=True))
+
+            self.proj_edge = nn.Sequential(nn.Linear(dim, dim), nn.LayerNorm(dim),
+                                        nn.ReLU(inplace=True))
+            self.norm_edge = nn.LayerNorm(dim)
+        self.dropout2 = nn.Dropout(drop)
 
     def forward_pre(
         self,
-        src,
+        src: torch.Tensor,
         mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
         position_bias: Optional[bool] = None,
     ):
+        B, N, D = src.shape
         if self.freqs_cis is not None:
             position_bias = self.freqs_cis
-        # pre norm: before atten and ffn
-        src2 = self.norm1(src)
+        if position_bias is not None:
+            src_x = src.unsqueeze(1).repeat(1, N, 1, 1)
+            tgt_x = src.unsqueeze(2).repeat(1, 1, N, 1)
+            kv = self.proj_memory(
+                torch.cat([position_bias, src_x, tgt_x], dim=-1))
+            position_bias = self.norm_edge(
+                position_bias + self.proj_edge(kv))  # (N, N, d_edge)
+            src = src.unsqueeze(2)
+            # pre norm: before atten and ffn
+            src_mask = key_padding_mask.unsqueeze(1).repeat(1, N, 1)
+            tgt_mask = key_padding_mask.unsqueeze(2).repeat(1, 1, N)
+            key_padding_mask = src_mask & tgt_mask
+            src = src.reshape(B * N, 1, D)
+            kv = kv.reshape(B * N, N, D)
+            position_bias = position_bias.reshape(B * N, N, D)
+            key_padding_mask = key_padding_mask.reshape(B * N, N)
+            kv = self.norm1(kv)
+            src2 = self.normq(src)
+        else:
+            src2 = self.norm1(src)
         if position_bias is None:
             src2 = self.attn(
                 query=src2,
@@ -154,14 +191,19 @@ class Block(nn.Module):
                 key_padding_mask=key_padding_mask,
             )[0]
         else:
-            src2 = self.attn(
-                input=src2,
-                mask=key_padding_mask,
-                position_bias=position_bias,
-            )[0]  # [B, T, D]
-        src = src + self.drop_path1(src2)
+            src2 = self.attn(query=src2,
+                             key=kv,
+                             value=kv,
+                             attn_mask=mask,
+                             key_padding_mask=key_padding_mask,
+                             need_weights=False)[0]
+        src = src + self.drop_path1(self.dropout2(src2))
         src = src + self.drop_path2(self.mlp(self.norm2(src)))
-        return src
+        if position_bias is not None:
+            return src.squeeze(1).reshape(B, N, D), position_bias.reshape(
+                B, N, N, D)
+        else:
+            return src
 
     def forward_post(
         self,
@@ -247,13 +289,11 @@ class CrossAttenderBlock(nn.Module):
             drop_path) if drop_path > 0.0 else nn.Identity()
 
         self.norm2 = norm_layer(dim)
-        self.mlp = Mlp(
-            in_features=dim,
-            hidden_features=int(dim * mlp_ratio),
-            act_layer=act_layer,
-            drop=drop,
-            bias=ffn_bias
-        )
+        self.mlp = Mlp(in_features=dim,
+                       hidden_features=int(dim * mlp_ratio),
+                       act_layer=act_layer,
+                       drop=drop,
+                       bias=ffn_bias)
         self.drop_path2 = DropPath(
             drop_path) if drop_path > 0.0 else nn.Identity()
 
@@ -422,8 +462,9 @@ class T5Attention(nn.Module):
         weights = F.softmax(scores.float(), dim=-1).type_as(
             scores)  # (bs, n_heads, qlen, klen)
         weights = F.dropout(
-            weights, p=self.dropout,
-            )  # (bs, n_heads, qlen, klen)
+            weights,
+            p=self.dropout,
+        )  # (bs, n_heads, qlen, klen)
 
         # Mask heads if we want to
         if head_mask is not None:
@@ -489,7 +530,7 @@ class RoEmbedAttention(nn.Module):
 
         """
         freqs_cis = position_bias.to(input.device)
-        x=input
+        x = input
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
@@ -513,11 +554,13 @@ class RoEmbedAttention(nn.Module):
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         scores = F.dropout(
-            scores, p=self.dropout,
-            )  # (bs, n_heads, qlen, klen)
-        output = torch.matmul(scores, xv)  # (bs, n_local_heads, seqlen, head_dim)
+            scores,
+            p=self.dropout,
+        )  # (bs, n_heads, qlen, klen)
+        output = torch.matmul(scores,
+                              xv)  # (bs, n_local_heads, seqlen, head_dim)
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
-        return (self.wo(output),)
+        return (self.wo(output), )
 
 
 def apply_rotary_emb(
@@ -549,6 +592,7 @@ def apply_rotary_emb(
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
+
 def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     """
     Reshape frequency tensor for broadcasting it with another tensor.
@@ -572,8 +616,11 @@ def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     # import pdb
     # pdb.set_trace()
     assert freqs_cis.shape == (x.shape[1], x.shape[-1])
-    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
+    shape = [
+        d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)
+    ]
     return freqs_cis.view(*shape)
+
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     """
@@ -592,7 +639,7 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
         torch.Tensor: Precomputed frequency tensor with complex exponentials.
 
     """
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    freqs = 1.0 / (theta**(torch.arange(0, dim, 2)[:(dim // 2)].float() / dim))
     t = torch.arange(end)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64

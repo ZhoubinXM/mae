@@ -90,7 +90,7 @@ class ModelMultiAgent(nn.Module):
                                           scene_score_depth=scene_score_depth)
 
     def forward(self, data):
-        agent_feat, x_pos_embed = self.agent_encoder(data)
+        agent_feat = self.agent_encoder(data)
         lane_actor_feat = self.lane_encoder(data)
         scene_feat = self.scene_encoder(data, agent_feat, lane_actor_feat)
-        return self.scene_decoder(data, scene_feat, x_pos_embed)
+        return self.scene_decoder(data, scene_feat, agent_feat)

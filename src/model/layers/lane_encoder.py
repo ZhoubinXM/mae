@@ -55,10 +55,10 @@ class LaneEncoder(nn.Module):
                 ffn_bias=ffn_bias,
             ) for _ in range(tempo_depth))
         
-        self.lane_pos_embed = MLPLayer(input_dim=lane_pos_input_dim,
-                                        hidden_dim=hidden_dim,
-                                        output_dim=hidden_dim,
-                                        norm_layer=None)
+        # self.lane_pos_embed = MLPLayer(input_dim=lane_pos_input_dim,
+        #                                 hidden_dim=hidden_dim,
+        #                                 output_dim=hidden_dim,
+        #                                 norm_layer=None)
 
         self.apply(weight_init)
 
@@ -121,24 +121,24 @@ class LaneEncoder(nn.Module):
         lane_actor_feat_tmp[~lane_padding_mask] = lane_actor_feat[:, 0]
         lane_actor_feat = lane_actor_feat_tmp.reshape(B, M, -1)
 
-        lane_centers = data["lane_positions"][:, :, 0].to(torch.float32)
-        lane_angles = torch.atan2(
-            data["lane_positions"][..., 1, 1] -
-            data["lane_positions"][..., 0, 1],
-            data["lane_positions"][..., 1, 0] -
-            data["lane_positions"][..., 0, 0],
-        )
-        lane_angles = torch.stack(
-            [torch.cos(lane_angles),
-             torch.sin(lane_angles)], dim=-1)
-        lane_pos_feat = torch.cat([lane_centers, lane_angles], dim=-1)
-        lane_pos_embed = self.lane_pos_embed(lane_pos_feat)
+        # lane_centers = data["lane_positions"][:, :, 0].to(torch.float32)
+        # lane_angles = torch.atan2(
+        #     data["lane_positions"][..., 1, 1] -
+        #     data["lane_positions"][..., 0, 1],
+        #     data["lane_positions"][..., 1, 0] -
+        #     data["lane_positions"][..., 0, 0],
+        # )
+        # lane_angles = torch.stack(
+        #     [torch.cos(lane_angles),
+        #      torch.sin(lane_angles)], dim=-1)
+        # lane_pos_feat = torch.cat([lane_centers, lane_angles], dim=-1)
+        # lane_pos_embed = self.lane_pos_embed(lane_pos_feat)
         # lane_pos_embed_tmp = torch.zeros(B * M,
         #                               lane_actor_feat.shape[-1],
         #                               device=lane_actor_feat.device)
         # lane_pos_embed_tmp[~lane_padding_mask] = lane_pos_embed
         # lane_pos_embed = lane_pos_embed_tmp.reshape(B, M, -1)
-        lane_actor_feat = lane_actor_feat + lane_pos_embed
+        # lane_actor_feat = lane_actor_feat + lane_pos_embed
 
         return lane_actor_feat
 
