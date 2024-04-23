@@ -4,6 +4,10 @@ from typing import List
 
 import ray
 from tqdm import tqdm
+import time
+import multiprocessing
+import numpy as np
+from joblib import Parallel, delayed
 
 from src.datamodule.av2_extractor import Av2Extractor
 from src.datamodule.av2_extractor_multiagent import Av2ExtractorMultiAgent
@@ -11,7 +15,7 @@ from src.datamodule.av2_extractor_multiagent_norm import Av2ExtractorMultiAgentN
 
 from src.utils.ray_utils import ActorHandle, ProgressBar
 
-# ray.init(num_cpus=64)
+# ray.init()
 
 
 def glob_files(data_root: Path, mode: str):
@@ -20,19 +24,21 @@ def glob_files(data_root: Path, mode: str):
     return scenario_files
 
 
-@ray.remote
-def preprocess_batch(extractor: Av2Extractor, file_list: List[Path],
-                     pb: ActorHandle):
+# @ray.remote
+def preprocess_batch(
+    extractor: Av2Extractor,
+    file_list: List[Path],
+):
     for file in file_list:
         extractor.save(file)
-        pb.update.remote(1)
+        # pb.update.remote(1)
 
 
 def preprocess(args):
-    batch = args.batch
     data_root = Path(args.data_root)
 
-    for mode in ["train", "val", "test"]:
+    for mode in ["val", "train", "test"]:
+        start = time.time()
         if args.multiagent:
             if not args.norm:
                 save_dir = data_root / "multiagent-baseline" / mode
@@ -50,17 +56,25 @@ def preprocess(args):
         scenario_files = glob_files(data_root, mode)
 
         if args.parallel:
-            pb = ProgressBar(len(scenario_files), f"preprocess {mode}-set")
-            pb_actor = pb.actor
+            # pb = ProgressBar(len(scenario_files), f"preprocess {mode}-set")
+            # pb_actor = pb.actor
+            n_proc = multiprocessing.cpu_count() - 2
+            batch_size = np.max(
+                [int(np.ceil(len(scenario_files) / n_proc)), 1])
+            print('n_proc: {}, batch_size: {}'.format(n_proc, batch_size))
+            Parallel(n_jobs=n_proc)(
+                delayed(preprocess_batch)(extractor,
+                                          scenario_files[i:i + batch_size])
+                for i in range(0, len(scenario_files), batch_size))
 
-            for i in range(0, len(scenario_files), batch):
-                preprocess_batch.remote(extractor, scenario_files[i:i + batch],
-                                        pb_actor)
-
-            pb.print_until_done()
+            # pb.print_until_done()
         else:
             for file in tqdm(scenario_files):
                 extractor.save(file)
+
+        print(
+            f"Preprocess for {mode} set completed in {(time.time()-start)/60.0} mins"
+        )
 
 
 if __name__ == "__main__":
