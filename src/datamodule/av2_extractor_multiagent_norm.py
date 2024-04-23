@@ -161,15 +161,15 @@ class Av2ExtractorMultiAgentNorm:
 
         # norm each agent
         x_ctrs = x[:, 49, :2].clone()
-        x_theta = x[:49].clone()
+        x_theta = x_heading[:, 49].clone()
         x_positions = x[:, :, :2].clone()
         for agent_i in range(x.shape[0]):
             orig = x[agent_i, 49, :2]
-            theta = x_heading[agent_i, 49]
-            rot = torch.tensor([[np.cos(theta), -np.sin(theta)],
-                                [np.sin(theta), np.cos(theta)]])
+            theta_i = x_heading[agent_i, 49]
+            rot = torch.tensor([[np.cos(theta_i), -np.sin(theta_i)],
+                                [np.sin(theta_i), np.cos(theta_i)]])
             x[agent_i] = torch.matmul(x[agent_i] - orig, rot)
-            x_heading[agent_i] = (x_heading[agent_i] - theta +
+            x_heading[agent_i] = (x_heading[agent_i] - theta_i +
                                   np.pi) % (2 * np.pi) - np.pi
 
         # norm each lane segment
@@ -178,12 +178,12 @@ class Av2ExtractorMultiAgentNorm:
         lane_thetas = torch.zeros([lane_ctrs.shape[0]])
         for lane_j in range(lane_positions.shape[0]):
             orig = lane_positions[lane_j, 0, :2]
-            theta = torch.arctan2(
+            theta_i = torch.arctan2(
                 lane_positions[lane_j, -1, 1] - lane_positions[lane_j, 0, 1],
                 lane_positions[lane_j, -1, 0] - lane_positions[lane_j, 0, 0])
-            lane_thetas[lane_j] = (theta + np.pi) % (2 * np.pi) - np.pi
-            rot = torch.tensor([[np.cos(theta), -np.sin(theta)],
-                                [np.sin(theta), np.cos(theta)]])
+            lane_thetas[lane_j] = (theta_i + np.pi) % (2 * np.pi) - np.pi
+            rot = torch.tensor([[np.cos(theta_i), -np.sin(theta_i)],
+                                [np.sin(theta_i), np.cos(theta_i)]])
             lane_positions[lane_j] = torch.matmul(
                 lane_positions[lane_j] - orig, rot)
 

@@ -67,7 +67,7 @@ class AgentEncoder(nn.Module):
     def forward(self, data: dict):
         agent_hist_padding_mask = data["x_padding_mask"][:, :, :50]
         agent_padding_mask = data["x_key_padding_mask"]
-        agent_hist_angles = data['x_angles'][:, :, :50].contiguous()
+        agent_hist_angles = data['x_angles'][:, :, :50].contiguous() # instance frame
         # agent_hist_angles_vec = torch.stack(
         #     [agent_hist_angles.cos(),
         #      agent_hist_angles.sin()], dim=-1)

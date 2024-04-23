@@ -71,6 +71,12 @@ def collate_fn(batch):
     ]:
         data[key] = pad_sequence([b[key] for b in batch], batch_first=True)
 
+    for key in [
+            "x_theta",
+            "lane_positions_orignal",
+    ]:
+        data[key] = pad_sequence([b[key] for b in batch], batch_first=True)
+
     # used in multi-agent prediction
     if "x_scored" in batch[0]:
         data["x_scored"] = pad_sequence([b["x_scored"] for b in batch],
@@ -95,11 +101,44 @@ def collate_fn(batch):
     data["origin"] = torch.cat([b["origin"] for b in batch], dim=0)
     data["theta"] = torch.cat([b["theta"] for b in batch])
 
+    scene_ctrs = torch.cat([data['x_centers'], data["lane_centers"]], dim=1)
+    x_vets = torch.stack([data['x_theta'].cos(),
+                              data['x_theta'].sin()], dim=-1)
+    lane_vets = torch.stack([data['lane_angles'].cos(),
+                             data["lane_angles"].sin()],
+                             dim=-1)
+    scene_vets = torch.cat([x_vets, lane_vets], dim=1)
+
+    d_pos = (scene_ctrs.unsqueeze(1) - scene_ctrs.unsqueeze(2)).norm(dim=-1)
+    d_pos = d_pos * 2 / 150  # scale [0, radius] to [0, 2]
+    pos_rpe = d_pos.unsqueeze(-1)
+
+    ang2ang = _get_rel_pe(scene_vets.unsqueeze(1), scene_vets.unsqueeze(2))
+    v_pos = scene_ctrs.unsqueeze(1) - scene_ctrs.unsqueeze(2)
+    ang2vec = _get_rel_pe(scene_vets.unsqueeze(1), v_pos)
+
+    data['rpe'] = torch.cat([ang2ang, ang2vec, pos_rpe], dim=-1)
     # data["lane_trans"], data["lane_trans_padding_mask"], data[
     #     "lane_centers"], data["lane_centers_padding_mask"], data[
     #         "lane_angles"] = resample(data)
 
     return data
+
+def _get_rel_pe(v1: torch.Tensor, v2: torch.Tensor):
+    # 扩展 heading 的维度以便进行广播
+    # v1 = heading.unsqueeze(1)  # shape: [B, 1, M, 2]
+    # v2 = heading.unsqueeze(2)  # shape: [B, M, 1, 2]
+
+    # 计算 v1 和 v2 的范数
+    v1_norm = v1.norm(dim=-1)  # shape: [B, 1, M, 1]
+    v2_norm = v2.norm(dim=-1)  # shape: [B, M, 1, 1]
+
+    # 计算 v1 和 v2 的 cos 和 sin 值
+    cos_val = (v1 * v2).sum(dim=-1) / (v1_norm * v2_norm + 1e-10)  # shape: [B, M, M]
+    sin_val = (v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]) / (v1_norm * v2_norm + 1e-10)  # shape: [B, M, M]
+
+    # 将 cos_val 和 sin_val 堆叠起来得到最终的结果
+    return torch.stack([cos_val, sin_val], dim=-1)  # shape: [B, M, M, 2]
 
 
 def sept_collate_fn(batch):

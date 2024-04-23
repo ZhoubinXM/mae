@@ -26,7 +26,7 @@ class LaneEncoder(nn.Module):
         category_input_dim = 5
         intersection_dim = 2
         lane_history_steps = 20
-        input_dim = 3
+        input_dim = 2
         lane_pos_input_dim = 4
 
         self.lane_category_emb = nn.Embedding(category_input_dim, hidden_dim)
@@ -67,13 +67,13 @@ class LaneEncoder(nn.Module):
         B, M, L = lane_pt_padding_mask.shape
         lane_vector = data["lane_positions"][:,:,1:] - data["lane_positions"][:,:,:-1]
         lane_vector = torch.cat([torch.zeros(B,M,1,2).to(lane_vector.device), lane_vector], dim=2)
-        lane_angles = torch.arctan2(lane_vector[..., 1], lane_vector[..., 0])
+        # lane_angles = torch.arctan2(lane_vector[..., 1], lane_vector[..., 0])
         # lane_angles_vector = torch.stack([lane_angles.cos(), lane_angles.sin()], dim=-1)
 
         lane_feat = torch.cat(
             [
                 lane_vector,
-                lane_angles.unsqueeze(-1),
+                # lane_angles.unsqueeze(-1),
             ],
             dim=-1,
         )  # [B, M, L, 2]
