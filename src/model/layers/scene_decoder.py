@@ -349,7 +349,7 @@ class SceneSimplDecoder(nn.Module):
             [cls_token, one_hot_mask.view(1, K, K).repeat(B, 1, 1)], dim=-1
         )
 
-        y_hat = self.traj_decoder(x_actors).view(B, K, N, self.future_steps, 2)
+        y_hat = self.traj_decoder(x_actors).view(B, K, N, self.future_steps, 2).permute(0,2,1,3,4)
         pi = self.prob_decoder(cls_token).view(B, K)
 
         return {"y_hat": y_hat, "pi": pi}
