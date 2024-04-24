@@ -5,6 +5,7 @@ from src.model.layers.transformer_blocks import Block, CrossAttenderBlock, MLPLa
 
 from src.utils.weight_init import weight_init
 from typing import List, Optional
+from torch_scatter import scatter_mean
 
 
 class SceneDecoder(nn.Module):
@@ -285,3 +286,70 @@ class SceneDecoder(nn.Module):
             "pi": pi,
             "y_propose": traj_propose,
         }
+
+
+class SceneSimplDecoder(nn.Module):
+    def __init__(
+        self,
+        hidden_dim: int,
+        embedding_type: str,
+        num_head: int,
+        dropout: float,
+        act_layer: nn.Module,
+        norm_layer: nn.Module,
+        post_norm: bool,
+        attn_bias: bool,
+        ffn_bias: bool,
+        depth: int,
+        scene_score_depth: int,
+        num_modes: int,
+        future_steps: int,
+        num_recurrent_steps: int,
+    ) -> None:
+        super().__init__()
+
+        future_steps = future_steps
+        num_recurrent_steps = num_recurrent_steps
+        self.future_steps = future_steps
+        self.num_recurrent_steps = num_recurrent_steps
+        self.num_modes = num_modes
+
+        self.register_buffer("one_hot_mask", torch.eye(self.num_modes))
+
+        self.traj_decoder = MLPLayer(
+            input_dim=hidden_dim + self.num_modes,
+            hidden_dim=hidden_dim * 4,
+            output_dim=future_steps * 2,
+        )
+
+        self.prob_decoder = MLPLayer(
+            input_dim=hidden_dim + self.num_modes,
+            hidden_dim=hidden_dim * 4,
+            output_dim=1,
+        )
+
+        self.apply(weight_init)
+
+    def forward(self, data: dict, scene_feat: torch.Tensor,
+                agent_pos_emb: torch.Tensor):
+        B, N, D = agent_pos_emb.shape
+        K = self.num_modes
+        key_padding_mask = torch.cat(
+            [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1
+        )
+        x_actors = scene_feat[:, :N].unsqueeze(1).repeat(1, K, 1, 1)
+        cls_token = scatter_mean(scene_feat, key_padding_mask.long(), dim=1)[:, 0]
+        cls_token = cls_token.unsqueeze(1).repeat(1, K, 1)
+        one_hot_mask = self.one_hot_mask
+
+        x_actors = torch.cat(
+            [x_actors, one_hot_mask.view(1, K, 1, K).repeat(B, 1, N, 1)], dim=-1
+        )
+        cls_token = torch.cat(
+            [cls_token, one_hot_mask.view(1, K, K).repeat(B, 1, 1)], dim=-1
+        )
+
+        y_hat = self.traj_decoder(x_actors).view(B, K, N, self.future_steps, 2)
+        pi = self.prob_decoder(cls_token).view(B, K)
+
+        return {"y_hat": y_hat, "pi": pi}

@@ -8,7 +8,7 @@ from ..layers.multimodal_decoder import MultiAgentDecoder, MultiAgentProposeDeco
 from src.model.layers.agent_encoder import AgentEncoder
 from src.model.layers.lane_encoder import LaneEncoder
 from src.model.layers.scene_encoder import SceneEncoder
-from src.model.layers.scene_decoder import SceneDecoder
+from src.model.layers.scene_decoder import SceneDecoder, SceneSimplDecoder
 
 
 class ModelMultiAgent(nn.Module):
@@ -74,7 +74,7 @@ class ModelMultiAgent(nn.Module):
                                           spa_depth=spa_depth)
 
         # Scene Decoder
-        self.scene_decoder = SceneDecoder(hidden_dim=embed_dim,
+        self.scene_decoder = SceneSimplDecoder(hidden_dim=embed_dim,
                                           embedding_type=embedding_type,
                                           num_head=num_heads,
                                           dropout=dropout,

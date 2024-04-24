@@ -82,7 +82,8 @@ class Trainer(pl.LightningModule):
     def cal_loss(self, outputs, data):
         y_hat = outputs["y_hat"]
         pi = outputs["pi"]
-        y_propose = outputs["y_propose"]
+        if "y_propose" in outputs.keys():
+            y_propose = outputs["y_propose"]
 
         x_scored, y, y_padding_mask = (
             data["x_scored"],
@@ -108,22 +109,26 @@ class Trainer(pl.LightningModule):
             :,
             :,
         ]
-        y_propose_best = y_propose[
-            # torch.arange(y_propose.shape[0]).unsqueeze(1),
-            torch.arange(y_propose.shape[0]),
-            # torch.arange(y_propose.shape[1]).unsqueeze(0),
-            :,
-            best_mode,
-            :,
-            :,
-        ]
+        if "y_propose" in outputs.keys():
+            y_propose_best = y_propose[
+                # torch.arange(y_propose.shape[0]).unsqueeze(1),
+                torch.arange(y_propose.shape[0]),
+                # torch.arange(y_propose.shape[1]).unsqueeze(0),
+                :,
+                best_mode,
+                :,
+                :,
+            ]
         reg_mask = ~y_padding_mask  # [b,n,t]
         reg_mask[~x_scored] = False
         # y_hat_best = y_hat[torch.arange(y_hat.shape[0]), best_mode]
 
         reg_loss = F.smooth_l1_loss(y_hat_best[reg_mask], y[reg_mask])
-        propose_reg_loss = F.smooth_l1_loss(y_propose_best[reg_mask],
-                                            y[reg_mask])
+        if "y_propose" in outputs.keys():
+            propose_reg_loss = F.smooth_l1_loss(y_propose_best[reg_mask],
+                                                y[reg_mask])
+        else:
+            propose_reg_loss = torch.tensor(0)
         # cls_loss = F.cross_entropy(
         #     pi.view(-1, pi.size(-1))[reg_mask.all(-1).view(-1)],
         #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
