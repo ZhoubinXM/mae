@@ -35,7 +35,8 @@ class SceneEncoder(nn.Module):
                 attn_bias=attn_bias,
                 ffn_bias=ffn_bias,
                 use_simpl=True,
-            ) for _ in range(spa_depth))
+                update_rpe=spa_depth - 1 > i,
+            ) for i in range(spa_depth))
 
         # self.scene_norm = norm_layer(hidden_dim)
         self.pos_embed = MLPLayer(input_dim=5,
@@ -77,7 +78,7 @@ class SceneEncoder(nn.Module):
         # angle_diff = angle1 - angle2
         # rel_pos = torch.stack([dist, angle_diff], dim=-1)
         # rel_pos = torch.cat([x, rel_pos], dim=-1)
-        rel_pos = data['rpe']
+        rel_pos = data["rpe"]
         rel_pos = self.pos_embed(rel_pos)  # [B, N, N]
 
         for blk in self.spa_net:

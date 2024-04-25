@@ -53,12 +53,14 @@ class Mlp(nn.Module):
 
 class MLPLayer(nn.Module):
 
-    def __init__(self,
-                 input_dim: int,
-                 hidden_dim: int,
-                 output_dim: int,
-                 act_layer=nn.ReLU,
-                 norm_layer=nn.LayerNorm) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        output_dim: int,
+        act_layer=nn.ReLU,
+        norm_layer=nn.LayerNorm,
+    ) -> None:
         super(MLPLayer, self).__init__()
         if norm_layer is not None:
             self.mlp = nn.Sequential(
@@ -98,12 +100,13 @@ class Block(nn.Module):
         attn_bias=True,
         ffn_bias=True,
         use_simpl=False,
+        update_rpe=True,
     ):
         super().__init__()
         self.post_norm = post_norm
         self.freqs_cis = None
 
-        self.norm1 = norm_layer(dim)    
+        self.norm1 = norm_layer(dim)
         if attn_type == "norm":
             self.attn = torch.nn.MultiheadAttention(
                 dim,
@@ -144,12 +147,14 @@ class Block(nn.Module):
         if use_simpl:
             self.normq = norm_layer(dim)
             self.proj_memory = nn.Sequential(nn.Linear(dim * 3, dim),
-                                            nn.LayerNorm(dim),
-                                            nn.ReLU(inplace=True))
-
-            self.proj_edge = nn.Sequential(nn.Linear(dim, dim), nn.LayerNorm(dim),
-                                        nn.ReLU(inplace=True))
-            self.norm_edge = nn.LayerNorm(dim)
+                                             nn.LayerNorm(dim),
+                                             nn.ReLU(inplace=True))
+            if update_rpe:
+                self.proj_edge = nn.Sequential(nn.Linear(dim, dim),
+                                               nn.LayerNorm(dim),
+                                               nn.ReLU(inplace=True))
+                self.norm_edge = nn.LayerNorm(dim)
+            self.update_rpe = update_rpe
         self.dropout2 = nn.Dropout(drop)
 
     def forward_pre(
@@ -167,8 +172,9 @@ class Block(nn.Module):
             tgt_x = src.unsqueeze(2).repeat(1, 1, N, 1)
             kv = self.proj_memory(
                 torch.cat([position_bias, src_x, tgt_x], dim=-1))
-            position_bias = self.norm_edge(
-                position_bias + self.proj_edge(kv))  # (N, N, d_edge)
+            if self.update_rpe:
+                position_bias = self.norm_edge(
+                    position_bias + self.proj_edge(kv))  # (N, N, d_edge)
             src = src.unsqueeze(2)
             # pre norm: before atten and ffn
             src_mask = key_padding_mask.unsqueeze(1).repeat(1, N, 1)
@@ -191,12 +197,14 @@ class Block(nn.Module):
                 key_padding_mask=key_padding_mask,
             )[0]
         else:
-            src2 = self.attn(query=src2,
-                             key=kv,
-                             value=kv,
-                             attn_mask=mask,
-                             key_padding_mask=key_padding_mask,
-                             need_weights=False)[0]
+            src2 = self.attn(
+                query=src2,
+                key=kv,
+                value=kv,
+                attn_mask=mask,
+                key_padding_mask=key_padding_mask,
+                need_weights=False,
+            )[0]
         src = src + self.drop_path1(self.dropout2(src2))
         src = src + self.drop_path2(self.mlp(self.norm2(src)))
         if position_bias is not None:
@@ -244,10 +252,12 @@ class Block(nn.Module):
             #                          key_padding_mask=key_padding_mask,
             #                          position_bias=position_bias)
 
-        return self.forward_pre(src=src,
-                                mask=mask,
-                                key_padding_mask=key_padding_mask,
-                                position_bias=position_bias)
+        return self.forward_pre(
+            src=src,
+            mask=mask,
+            key_padding_mask=key_padding_mask,
+            position_bias=position_bias,
+        )
 
 
 class CrossAttenderBlock(nn.Module):
@@ -268,6 +278,8 @@ class CrossAttenderBlock(nn.Module):
         vdim=None,
         attn_bias=True,
         ffn_bias=True,
+        use_simpl=False,
+        update_rpe=True,
     ):
         super().__init__()
         self.post_norm = post_norm
@@ -289,22 +301,58 @@ class CrossAttenderBlock(nn.Module):
             drop_path) if drop_path > 0.0 else nn.Identity()
 
         self.norm2 = norm_layer(dim)
-        self.mlp = Mlp(in_features=dim,
-                       hidden_features=int(dim * mlp_ratio),
-                       act_layer=act_layer,
-                       drop=drop,
-                       bias=ffn_bias)
+        self.mlp = Mlp(
+            in_features=dim,
+            hidden_features=int(dim * mlp_ratio),
+            act_layer=act_layer,
+            drop=drop,
+            bias=ffn_bias,
+        )
         self.drop_path2 = DropPath(
             drop_path) if drop_path > 0.0 else nn.Identity()
+        if use_simpl:
+            self.proj_memory = nn.Sequential(nn.Linear(dim * 3, dim),
+                                             nn.LayerNorm(dim),
+                                             nn.ReLU(inplace=True))
+            if update_rpe:
+                self.proj_edge = nn.Sequential(nn.Linear(dim, dim),
+                                               nn.LayerNorm(dim),
+                                               nn.ReLU(inplace=True))
+                self.norm_edge = nn.LayerNorm(dim)
+            self.update_rpe = update_rpe
+        self.dropout2 = nn.Dropout(drop)
 
     def forward_pre(
         self,
-        src,
-        k,
+        src: torch.Tensor,
+        k: torch.Tensor,
         v,
         mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
+        position_bias: Optional[Tensor] = None,
     ):
+        if position_bias is not None:
+            _, N, M, _ = position_bias.shape
+            B, M, D = k.shape
+            src_x = k[:, :N].unsqueeze(2).repeat(1, 1, M, 1)
+            tgt_x = k.unsqueeze(1).repeat(1, N, 1, 1)
+            kv = self.proj_memory(
+                torch.cat([position_bias, src_x, tgt_x], dim=-1))  # [B,N,M,D]
+            # update edge
+            if self.update_rpe:
+                position_bias = self.norm_edge(
+                    position_bias + self.proj_edge(kv))  # (N, N, d_edge)
+                position_bias = position_bias.reshape(B * N, M, D)
+            kv = kv.unsqueeze(2).repeat(1, 1, 6, 1, 1)  # [B,N,6,M,D]
+            src_mask = key_padding_mask[:, :N].unsqueeze(2).repeat(1, 1, M)
+            tgt_mask = key_padding_mask.unsqueeze(1).repeat(1, N, 1)
+            key_padding_mask = (src_mask & tgt_mask).unsqueeze(2).repeat(
+                1, 1, 6, 1)
+            src = src.unsqueeze(2).reshape(B * N * 6, 1, D)
+            kv = kv.reshape(B * N * 6, M, D)
+            key_padding_mask = key_padding_mask.reshape(B * N * 6, M)
+            k = kv
+            v = kv
         src2 = self.norm1(src)
         k = self.normk(k)
         v = self.normv(v)
@@ -315,9 +363,13 @@ class CrossAttenderBlock(nn.Module):
             attn_mask=mask,
             key_padding_mask=key_padding_mask,
         )[0]
-        src = src + self.drop_path1(src2)
+        src = src + self.drop_path1(self.dropout2(src2))
         src = src + self.drop_path2(self.mlp(self.norm2(src)))
-        return src
+        if position_bias is not None:
+            return src.squeeze(1).reshape(B, N * 6, D), position_bias.reshape(
+                B, N, M, D)
+        else:
+            return src
 
     def forward_post(
         self,
@@ -345,30 +397,37 @@ class CrossAttenderBlock(nn.Module):
         value,
         mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
+        position_bias: Optional[Tensor] = None,
     ):
         if self.post_norm:
-            return self.forward_post(src=src,
-                                     k=key,
-                                     v=value,
-                                     mask=mask,
-                                     key_padding_mask=key_padding_mask)
+            # return self.forward_post(src=src,
+            #                          k=key,
+            #                          v=value,
+            #                          mask=mask,
+            #                          key_padding_mask=key_padding_mask)
+            return False
 
-        return self.forward_pre(src=src,
-                                k=key,
-                                v=value,
-                                mask=mask,
-                                key_padding_mask=key_padding_mask)
+        return self.forward_pre(
+            src=src,
+            k=key,
+            v=value,
+            mask=mask,
+            key_padding_mask=key_padding_mask,
+            position_bias=position_bias,
+        )
 
 
 class T5Attention(nn.Module):
 
-    def __init__(self,
-                 d_model,
-                 d_kv,
-                 num_heads,
-                 dropout_rate,
-                 hist_step: float = 50,
-                 bias: bool = True):
+    def __init__(
+        self,
+        d_model,
+        d_kv,
+        num_heads,
+        dropout_rate,
+        hist_step: float = 50,
+        bias: bool = True,
+    ):
         super().__init__()
 
         self.d_model = d_model
@@ -383,10 +442,12 @@ class T5Attention(nn.Module):
         self.v = nn.Linear(self.d_model, self.inner_dim, bias=bias)
         self.o = nn.Linear(self.inner_dim, self.d_model, bias=bias)
 
-        self.pos_embed = RelativePositionBias(bidirectional=True,
-                                              num_buckets=64,
-                                              max_distance=hist_step,
-                                              n_heads=self.n_heads)
+        self.pos_embed = RelativePositionBias(
+            bidirectional=True,
+            num_buckets=64,
+            max_distance=hist_step,
+            n_heads=self.n_heads,
+        )
         self.pruned_heads = set()
 
     def prune_heads(self, heads):
@@ -411,11 +472,11 @@ class T5Attention(nn.Module):
             klen = kv.size(1)
 
         def shape(x):
-            """  projection """
+            """projection"""
             return x.view(bs, -1, self.n_heads, self.d_kv).transpose(1, 2)
 
         def unshape(x):
-            """  compute context """
+            """compute context"""
             return x.transpose(1, 2).contiguous().view(bs, -1, self.inner_dim)
 
         q = shape(self.q(input))  # (bs, n_heads, qlen, dim_per_head)
@@ -443,8 +504,7 @@ class T5Attention(nn.Module):
         scores = torch.einsum("bnqd,bnkd->bnqk", q,
                               k)  # (bs, n_heads, qlen, klen)
         # convert mask to float
-        mask = mask.view(bs, 1, 1, qlen).   \
-            expand(-1, self.n_heads, -1, -1)
+        mask = mask.view(bs, 1, 1, qlen).expand(-1, self.n_heads, -1, -1)
         if mask is not None and mask.dtype == torch.bool:
             new_attn_mask = torch.zeros_like(mask, dtype=q.dtype)
             new_attn_mask.masked_fill_(mask, float("-inf"))
@@ -484,7 +544,7 @@ class T5Attention(nn.Module):
 class RoEmbedAttention(nn.Module):
     """Multi-head attention module."""
 
-    def __init__(self, num_heads=8, dim=128, qkv_bias=False, dropout=0.):
+    def __init__(self, num_heads=8, dim=128, qkv_bias=False, dropout=0.0):
         """
         Initialize the Attention module.
 
@@ -544,8 +604,7 @@ class RoEmbedAttention(nn.Module):
         xk = xk.transpose(1, 2)
         xv = xv.transpose(1, 2)
         scores = torch.matmul(xq, xk.transpose(2, 3)) / (self.head_dim**0.5)
-        mask = mask.view(bsz, 1, 1, seqlen).   \
-            expand(-1, self.num_heads, -1, -1)
+        mask = mask.view(bsz, 1, 1, seqlen).expand(-1, self.num_heads, -1, -1)
         if mask is not None and mask.dtype == torch.bool:
             new_attn_mask = torch.zeros_like(mask, dtype=xq.dtype)
             new_attn_mask.masked_fill_(mask, float("-inf"))

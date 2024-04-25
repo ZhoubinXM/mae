@@ -134,7 +134,7 @@ class Trainer(pl.LightningModule):
         #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
         cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
 
-        loss = reg_loss + cls_loss + propose_reg_loss
+        loss = 0.4 * reg_loss + 0.2 * cls_loss + 0.4 * propose_reg_loss
         out = {
             "loss": loss,
             "reg_loss": reg_loss.item(),

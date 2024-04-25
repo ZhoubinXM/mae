@@ -101,12 +101,11 @@ def collate_fn(batch):
     data["origin"] = torch.cat([b["origin"] for b in batch], dim=0)
     data["theta"] = torch.cat([b["theta"] for b in batch])
 
-    scene_ctrs = torch.cat([data['x_centers'], data["lane_centers"]], dim=1)
-    x_vets = torch.stack([data['x_theta'].cos(),
-                              data['x_theta'].sin()], dim=-1)
-    lane_vets = torch.stack([data['lane_angles'].cos(),
-                             data["lane_angles"].sin()],
-                             dim=-1)
+    scene_ctrs = torch.cat([data["x_centers"], data["lane_centers"]], dim=1)
+    x_vets = torch.stack([data["x_theta"].cos(), data["x_theta"].sin()],
+                         dim=-1)
+    lane_vets = torch.stack(
+        [data["lane_angles"].cos(), data["lane_angles"].sin()], dim=-1)
     scene_vets = torch.cat([x_vets, lane_vets], dim=1)
 
     d_pos = (scene_ctrs.unsqueeze(1) - scene_ctrs.unsqueeze(2)).norm(dim=-1)
@@ -117,12 +116,31 @@ def collate_fn(batch):
     v_pos = scene_ctrs.unsqueeze(1) - scene_ctrs.unsqueeze(2)
     ang2vec = _get_rel_pe(scene_vets.unsqueeze(1), v_pos)
 
-    data['rpe'] = torch.cat([ang2ang, ang2vec, pos_rpe], dim=-1)
-    # data["lane_trans"], data["lane_trans_padding_mask"], data[
-    #     "lane_centers"], data["lane_centers_padding_mask"], data[
-    #         "lane_angles"] = resample(data)
+    data["rpe"] = torch.cat([ang2ang, ang2vec, pos_rpe], dim=-1)
+
+    x_ctrs = data["x_centers"]
+    x_d_pos = (x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)).norm(dim=-1)
+    x_d_pos = x_d_pos * 2 / 150  # scale [0, radius] to [0, 2]
+    x_pos_rpe = x_d_pos.unsqueeze(-1)
+    x_ang2ang = _get_rel_pe(x_vets.unsqueeze(1), x_vets.unsqueeze(2))
+    x_v_pos = x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)
+    x_ang2vec = _get_rel_pe(x_vets.unsqueeze(1), x_v_pos)
+
+    data["x_rpe"] = torch.cat([x_ang2ang, x_ang2vec, x_pos_rpe], dim=-1)
+
+    x_scene_d_pos = (x_ctrs.unsqueeze(2) -
+                     scene_ctrs.unsqueeze(1)).norm(dim=-1)
+    x_scene_d_pos = x_scene_d_pos * 2 / 150  # scale [0, radius] to [0, 2]
+    x_scene_pos_rpe = x_scene_d_pos.unsqueeze(-1)
+    x_scene_ang2ang = _get_rel_pe(x_vets.unsqueeze(2), scene_vets.unsqueeze(1))
+    x_scene_v_pos = x_ctrs.unsqueeze(2) - scene_ctrs.unsqueeze(1)
+    x_scene_ang2vec = _get_rel_pe(x_vets.unsqueeze(2), x_scene_v_pos)
+
+    data["x_scene_rpe"] = torch.cat(
+        [x_scene_ang2ang, x_scene_ang2vec, x_scene_pos_rpe], dim=-1)
 
     return data
+
 
 def _get_rel_pe(v1: torch.Tensor, v2: torch.Tensor):
     # 扩展 heading 的维度以便进行广播
@@ -134,8 +152,10 @@ def _get_rel_pe(v1: torch.Tensor, v2: torch.Tensor):
     v2_norm = v2.norm(dim=-1)  # shape: [B, M, 1, 1]
 
     # 计算 v1 和 v2 的 cos 和 sin 值
-    cos_val = (v1 * v2).sum(dim=-1) / (v1_norm * v2_norm + 1e-10)  # shape: [B, M, M]
-    sin_val = (v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]) / (v1_norm * v2_norm + 1e-10)  # shape: [B, M, M]
+    cos_val = (v1 * v2).sum(dim=-1) / (v1_norm * v2_norm + 1e-10
+                                       )  # shape: [B, M, M]
+    sin_val = (v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]) / (
+        v1_norm * v2_norm + 1e-10)  # shape: [B, M, M]
 
     # 将 cos_val 和 sin_val 堆叠起来得到最终的结果
     return torch.stack([cos_val, sin_val], dim=-1)  # shape: [B, M, M, 2]
@@ -213,7 +233,7 @@ def sept_collate_fn_lane_candidate(batch):
             "lane_angles",
             "lane_attr",
             "is_intersections",
-            "lane_candidate"
+            "lane_candidate",
     ]:
         data[key] = pad_sequence([b[key] for b in batch], batch_first=True)
 
@@ -224,37 +244,41 @@ def sept_collate_fn_lane_candidate(batch):
             "lane_attr",
             "is_intersections",
     ]:
-        data[key + '_candidate'] = pad_sequence(
-            [b[key][b['lane_candidate'].bool()] for b in batch],
+        data[key + "_candidate"] = pad_sequence(
+            [b[key][b["lane_candidate"].bool()] for b in batch],
             batch_first=True)
     # all trajectories
     batch_lanes, batch_lanes_candidate = [], []
     for b in batch:
-        lane_segment = b['lane_positions']
-        lane_candidate = b['lane_candidate']
-        lane_angles = b['lane_angles']
-        lane_attr = b['lane_attr']
+        lane_segment = b["lane_positions"]
+        lane_candidate = b["lane_candidate"]
+        lane_angles = b["lane_angles"]
+        lane_attr = b["lane_attr"]
         lanes, lanes_candidate = [], []
         for i in range(len(lane_segment)):
             lane_pts = lane_segment[i][lane_segment[i].all(-1)]
             if len(lane_pts) >= 1:
                 if len(lane_pts) == 1:
-                    vec_pt = torch.cat([
-                        lane_pts,
-                        lane_pts,
-                        lane_angles[i].unsqueeze(-1)[None, :].repeat(1, 1),
-                        lane_attr[i][None, :].repeat(1, 1),
-                    ],
-                                       dim=-1)
+                    vec_pt = torch.cat(
+                        [
+                            lane_pts,
+                            lane_pts,
+                            lane_angles[i].unsqueeze(-1)[None, :].repeat(1, 1),
+                            lane_attr[i][None, :].repeat(1, 1),
+                        ],
+                        dim=-1,
+                    )
                 else:
-                    vec_pt = torch.cat([
-                        lane_pts[:-1],
-                        lane_pts[1:],
-                        lane_angles[i].unsqueeze(-1)[None, :].repeat(
-                            len(lane_pts) - 1, 1),
-                        lane_attr[i][None, :].repeat(len(lane_pts) - 1, 1),
-                    ],
-                                       dim=-1)
+                    vec_pt = torch.cat(
+                        [
+                            lane_pts[:-1],
+                            lane_pts[1:],
+                            lane_angles[i].unsqueeze(-1)[None, :].repeat(
+                                len(lane_pts) - 1, 1),
+                            lane_attr[i][None, :].repeat(len(lane_pts) - 1, 1),
+                        ],
+                        dim=-1,
+                    )
                 lanes.append(vec_pt)
                 if lane_candidate[i]:
                     lanes_candidate.append(vec_pt)
@@ -265,14 +289,14 @@ def sept_collate_fn_lane_candidate(batch):
         batch_lanes.append(lanes)
         batch_lanes_candidate.append(lanes_candidate)
 
-    data['lane_positions'] = pad_sequence([b for b in batch_lanes],
+    data["lane_positions"] = pad_sequence([b for b in batch_lanes],
                                           batch_first=True)
-    data["lane_padding_mask"] = (data['lane_positions'] == 0).all(
+    data["lane_padding_mask"] = (data["lane_positions"] == 0).all(
         dim=-1)  # pad is True
-    data['lane_positions_candidate'] = pad_sequence(
+    data["lane_positions_candidate"] = pad_sequence(
         [b for b in batch_lanes_candidate], batch_first=True)
     data["lane_padding_mask_candidate"] = (
-        data['lane_positions_candidate'] == 0).all(dim=-1)  # pad is True
+        data["lane_positions_candidate"] == 0).all(dim=-1)  # pad is True
     # lane_positions = [b['lane_positions'] for b in batch]
     # # 找到n和m的最大值
     # max_n = max(tensor.size(0) for tensor in lane_positions)
@@ -336,12 +360,19 @@ def sept_collate_fn_lane_candidate(batch):
 
 def resample(data: dict, distance=5.0):
     # get lane related feature
-    tensor = data['lane_positions']
+    tensor = data["lane_positions"]
     lane_mask = data["lane_padding_mask"]
-    attr = data['lane_attr']
-    angle = data['lane_angles']
+    attr = data["lane_attr"]
+    angle = data["lane_angles"]
     B, M, L, _ = tensor.shape
-    output, lane_center, lane_angle, outputs, lane_centers, lane_angles = [], [], [], [], [], []
+    output, lane_center, lane_angle, outputs, lane_centers, lane_angles = (
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
     for b in range(B):
         for m in range(M):
             lane = tensor[b, m][~lane_mask[b, m]]  # shape: [L, 2]
@@ -358,12 +389,14 @@ def resample(data: dict, distance=5.0):
             lane_resampled = interp_utils.interp_arc(N, points=lane)
             lane_vec = lane_resampled[:-1] - lane_resampled[1:]
             output.append(
-                torch.cat([
-                    lane_vec, attr[b, m].unsqueeze(0).repeat(
-                        lane_vec.shape[0], 1), angle[b, m].unsqueeze(0).repeat(
-                            lane_vec.shape[0], 1)
-                ],
-                          dim=-1))
+                torch.cat(
+                    [
+                        lane_vec,
+                        attr[b, m].unsqueeze(0).repeat(lane_vec.shape[0], 1),
+                        angle[b, m].unsqueeze(0).repeat(lane_vec.shape[0], 1),
+                    ],
+                    dim=-1,
+                ))
             lane_center.append(lane_resampled[:-1])
             lane_angle.append(angle[b, m].unsqueeze(0).repeat(
                 lane_vec.shape[0], 1))
@@ -377,5 +410,10 @@ def resample(data: dict, distance=5.0):
     lane_positions_padding_mask = lane_positions.isnan()
     lane_centers_padding_mask = lane_centers.ne(0).bool()
     lane_angles = pad_sequence(lane_angles, batch_first=True)
-    return lane_positions, lane_positions_padding_mask, lane_centers, lane_centers_padding_mask, lane_angles.squeeze(
-        -1)
+    return (
+        lane_positions,
+        lane_positions_padding_mask,
+        lane_centers,
+        lane_centers_padding_mask,
+        lane_angles.squeeze(-1),
+    )
