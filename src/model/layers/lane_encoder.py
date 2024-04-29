@@ -118,7 +118,7 @@ class LaneEncoder(nn.Module):
                                           lane_actor_feat.shape[-1],
                                           device=lane_actor_feat.device)
 
-        lane_actor_feat_tmp[~lane_padding_mask] = lane_actor_feat[:, 0]
+        lane_actor_feat_tmp[~lane_padding_mask] = lane_actor_feat[:, 0].clone()
         lane_actor_feat = lane_actor_feat_tmp.reshape(B, M, -1)
 
         # lane_centers = data["lane_positions"][:, :, 0].to(torch.float32)

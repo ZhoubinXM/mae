@@ -127,7 +127,7 @@ class AgentEncoder(nn.Module):
                                      agent_feat.shape[-1],
                                      device=agent_feat.device)
 
-        agent_feat_tmp[~agent_padding_mask] = agent_feat[:, 0]
+        agent_feat_tmp[~agent_padding_mask] = agent_feat[:, 0].clone()
         agent_feat = agent_feat_tmp.reshape(B, N, agent_feat.shape[-1])
 
         # x_positions = data["x_positions"][:, :, 49]  # [B, N, 2]

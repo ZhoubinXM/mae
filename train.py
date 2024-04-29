@@ -13,6 +13,8 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
+from hydra.utils import instantiate, to_absolute_path
+from importlib import import_module
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
@@ -44,6 +46,17 @@ def main(conf):
         RichProgressBar(),
         LearningRateMonitor(logging_interval="epoch"),
     ]
+    # if conf.checkpoint is not None:
+    #     checkpoint = to_absolute_path(conf.checkpoint)
+    # else:
+    #     checkpoint = None
+    # if os.path.exists(checkpoint):
+    #     model_path = conf.model.target._target_
+    #     module = import_module(model_path[: model_path.rfind(".")])
+    #     Model: pl.LightningModule = getattr(module, model_path[model_path.rfind(".") + 1 :])
+    #     model = Model.load_from_checkpoint(checkpoint)
+    # else:
+    model = instantiate(conf.model.target)
 
     trainer = pl.Trainer(
         logger=logger,
@@ -57,13 +70,14 @@ def main(conf):
                              gradient_as_bucket_view=True),
         # strategy="ddp",
         # if conf.gpus > 1 else None,
+        # accumulate_grad_batches=8,
         callbacks=callbacks,
         limit_train_batches=conf.limit_train_batches,
         limit_val_batches=conf.limit_val_batches,
         sync_batchnorm=conf.sync_bn,
+        # resume_from_checkpoint=checkpoint,
     )
-
-    model = instantiate(conf.model.target)
+    
     datamodule = instantiate(conf.datamodule)
     trainer.fit(model, datamodule, ckpt_path=conf.checkpoint)
     # 加载checkpoint

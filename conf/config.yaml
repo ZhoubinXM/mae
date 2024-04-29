@@ -1,30 +1,30 @@
 defaults:
   - hydra: default
   - datamodule: av2
-  - model: model_forecast
+  - model: model_multiagent
 
 seed: 2333
-monitor: val_loss
-save_top_k: 10
+monitor: val_AvgMinFDE
+save_top_k: 1
 
-data_root:
-checkpoint:
+data_root: /home/jerome.zhou/data/av2
+checkpoint: 
 pretrained_weights:
-output: ${model.name}-${model.phase}
+output: spa_6_propose_2_no_refine
 
 # trainer
 num_workers: 8
-gpus: 1
+gpus: [0,1,2,3,4,5,6,7]
 sync_bn: true
-batch_size: 32
+batch_size: 4
 epochs: 60
 warmup_epochs: 10
 post_norm: False
 road_embed_type: transform
-tempo_embed_type: T5
+tempo_embed_type: norm
 
 # optimizer
-lr: 0.0003
+lr: 0.0002
 weight_decay: 1e-4
 gradient_clip_val: 
 gradient_clip_algorithm: 
