@@ -8,6 +8,7 @@ import tqdm
 import av2.geometry.interpolate as interp_utils
 
 from .av2_extractor import Av2Extractor
+import random
 
 
 class Av2Dataset(Dataset):
@@ -101,6 +102,8 @@ def collate_fn(batch):
     data["origin"] = torch.cat([b["origin"] for b in batch], dim=0)
     data["theta"] = torch.cat([b["theta"] for b in batch])
 
+    data = data_augmentation(data)
+
     scene_ctrs = torch.cat([data['x_centers'], data["lane_centers"]], dim=1)
     x_vets = torch.stack([data['x_theta'].cos(),
                               data['x_theta'].sin()], dim=-1)
@@ -121,6 +124,25 @@ def collate_fn(batch):
     # data["lane_trans"], data["lane_trans_padding_mask"], data[
     #     "lane_centers"], data["lane_centers_padding_mask"], data[
     #         "lane_angles"] = resample(data)
+
+    return data
+
+def data_augmentation(data):    
+
+    is_aug = random.choices([True, False], weights=[0.3, 0.7])[0]
+    if not (is_aug):
+        return data
+
+    # ~ random vertical flip
+    data['x'][..., 1] *= -1
+    data['y'][..., 1] *= -1
+    data['lane_positions'][..., 1] *= -1
+    data['x_centers'][..., 1] *= -1
+    data['x_angles'] *= -1
+
+    data['lane_centers'][..., 1] *= -1
+    data['x_theta'] *= -1
+    data['lane_angles'] *= -1
 
     return data
 

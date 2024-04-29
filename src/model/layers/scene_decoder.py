@@ -170,8 +170,8 @@ class SceneDecoder(nn.Module):
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
         agent_padding_mask = data["x_key_padding_mask"].reshape(B * N)
         traj_query: torch.Tensor = (
-            self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(
-                B, N, 1, 1) + scene_feat[:, :N].unsqueeze(2)).reshape(B, N * self.num_modes, D)
+            self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(B, N, 1, 1)
+            + scene_feat[:, :N].unsqueeze(2)).reshape(B, N * self.num_modes, D)
 
         locs_propose_pos: List[Optional[
             torch.Tensor]] = [None] * self.num_recurrent_steps
@@ -289,6 +289,7 @@ class SceneDecoder(nn.Module):
 
 
 class SceneSimplDecoder(nn.Module):
+
     def __init__(
         self,
         hidden_dim: int,
@@ -335,21 +336,23 @@ class SceneSimplDecoder(nn.Module):
         B, N, D = agent_pos_emb.shape
         K = self.num_modes
         key_padding_mask = torch.cat(
-            [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1
-        )
+            [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
         x_actors = scene_feat[:, :N].unsqueeze(1).repeat(1, K, 1, 1)
-        cls_token = scatter_mean(scene_feat, key_padding_mask.long(), dim=1)[:, 0]
+        cls_token = scatter_mean(scene_feat, key_padding_mask.long(), dim=1)[:,
+                                                                             0]
         cls_token = cls_token.unsqueeze(1).repeat(1, K, 1)
         one_hot_mask = self.one_hot_mask
 
         x_actors = torch.cat(
-            [x_actors, one_hot_mask.view(1, K, 1, K).repeat(B, 1, N, 1)], dim=-1
-        )
+            [x_actors,
+             one_hot_mask.view(1, K, 1, K).repeat(B, 1, N, 1)],
+            dim=-1)
         cls_token = torch.cat(
-            [cls_token, one_hot_mask.view(1, K, K).repeat(B, 1, 1)], dim=-1
-        )
+            [cls_token, one_hot_mask.view(1, K, K).repeat(B, 1, 1)], dim=-1)
 
-        y_hat = self.traj_decoder(x_actors).view(B, K, N, self.future_steps, 2).permute(0,2,1,3,4)
+        y_hat = self.traj_decoder(x_actors).view(B, K, N, self.future_steps,
+                                                 2).permute(0, 2, 1, 3, 4)
+        y_hat = torch.cumsum(y_hat, dim=-2)
         pi = self.prob_decoder(cls_token).view(B, K)
 
         return {"y_hat": y_hat, "pi": pi}

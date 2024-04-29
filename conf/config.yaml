@@ -24,7 +24,7 @@ road_embed_type: transform
 tempo_embed_type: T5
 
 # optimizer
-lr: 0.0003
+lr: 0.0002
 weight_decay: 1e-4
 gradient_clip_val: 
 gradient_clip_algorithm: 

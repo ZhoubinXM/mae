@@ -35,7 +35,8 @@ class SceneEncoder(nn.Module):
                 attn_bias=attn_bias,
                 ffn_bias=ffn_bias,
                 use_simpl=True,
-            ) for _ in range(spa_depth))
+                update_rpe=i < spa_depth - 1  # last layer no need update.
+            ) for i in range(spa_depth))
 
         # self.scene_norm = norm_layer(hidden_dim)
         self.pos_embed = MLPLayer(input_dim=5,

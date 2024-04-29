@@ -81,6 +81,7 @@ class Trainer(pl.LightningModule):
 
     def cal_loss(self, outputs, data):
         y_hat = outputs["y_hat"]
+        B, N, K, T, _ = y_hat.shape
         pi = outputs["pi"]
         if "y_propose" in outputs.keys():
             y_propose = outputs["y_propose"]
@@ -96,29 +97,46 @@ class Trainer(pl.LightningModule):
         valid_mask[~x_scored] = False  # [b,n,t]
         valid_mask = valid_mask.unsqueeze(2).float()  # [b,n,1,t]
 
-        scene_avg_ade = (torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
-                         valid_mask).sum(dim=(-1, -3)) / valid_mask.sum(
-                             dim=(-1, -3))
-        best_mode = torch.argmin(scene_avg_ade, dim=-1)
-        y_hat_best = y_hat[
-            # torch.arange(y_hat.shape[0]).unsqueeze(1),
-            torch.arange(y_hat.shape[0]),
-            # torch.arange(y_hat.shape[1]).unsqueeze(0),
-            :,
-            best_mode,
-            :,
-            :,
-        ]
-        if "y_propose" in outputs.keys():
-            y_propose_best = y_propose[
-                # torch.arange(y_propose.shape[0]).unsqueeze(1),
-                torch.arange(y_propose.shape[0]),
-                # torch.arange(y_propose.shape[1]).unsqueeze(0),
+        if len(pi.shape) == 2:
+            scene_avg_ade = (
+                torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
+                valid_mask).sum(dim=(-1, -3)) / valid_mask.sum(dim=(-1, -3))
+            best_mode = torch.argmin(scene_avg_ade, dim=-1)
+        else:
+            scene_avg_ade = (
+                torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
+                valid_mask).sum(dim=(-1)) / valid_mask.sum(dim=(-1))
+            best_mode = torch.argmin(scene_avg_ade, dim=-1)
+        if len(pi.shape) == 2:
+            y_hat_best = y_hat[
+                # torch.arange(y_hat.shape[0]).unsqueeze(1),
+                torch.arange(y_hat.shape[0]),
+                # torch.arange(y_hat.shape[1]).unsqueeze(0),
                 :,
                 best_mode,
                 :,
                 :,
             ]
+            if "y_propose" in outputs.keys():
+                y_propose_best = y_propose[
+                    # torch.arange(y_propose.shape[0]).unsqueeze(1),
+                    torch.arange(y_propose.shape[0]),
+                    # torch.arange(y_propose.shape[1]).unsqueeze(0),
+                    :,
+                    best_mode,
+                    :,
+                    :,
+                ]
+        else:
+            y_hat_best = y_hat.gather(
+                2,
+                best_mode.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand(
+                    B, N, 1, T, 2)).squeeze(2)  # [B,N,60,2]
+            if "y_propose" in outputs.keys():
+                y_propose_best = y_propose.gather(
+                    2,
+                    best_mode.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand(
+                        B, N, 1, T, 2)).squeeze(2)
         reg_mask = ~y_padding_mask  # [b,n,t]
         reg_mask[~x_scored] = False
         # y_hat_best = y_hat[torch.arange(y_hat.shape[0]), best_mode]
@@ -132,9 +150,14 @@ class Trainer(pl.LightningModule):
         # cls_loss = F.cross_entropy(
         #     pi.view(-1, pi.size(-1))[reg_mask.all(-1).view(-1)],
         #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
-        cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
+        if len(pi.shape) == 2:
+            cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
+        else:
+            cls_loss = F.cross_entropy(
+                pi.view(-1, K)[reg_mask.all(-1).view(-1)],
+                best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
 
-        loss = reg_loss + cls_loss + propose_reg_loss
+        loss = 0.8 * reg_loss + 0.2 * cls_loss + propose_reg_loss
         out = {
             "loss": loss,
             "reg_loss": reg_loss.item(),

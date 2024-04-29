@@ -98,6 +98,7 @@ class Block(nn.Module):
         attn_bias=True,
         ffn_bias=True,
         use_simpl=False,
+        update_rpe=True,
     ):
         super().__init__()
         self.post_norm = post_norm
@@ -146,10 +147,11 @@ class Block(nn.Module):
             self.proj_memory = nn.Sequential(nn.Linear(dim * 3, dim),
                                             nn.LayerNorm(dim),
                                             nn.ReLU(inplace=True))
-
-            self.proj_edge = nn.Sequential(nn.Linear(dim, dim), nn.LayerNorm(dim),
-                                        nn.ReLU(inplace=True))
-            self.norm_edge = nn.LayerNorm(dim)
+            if update_rpe:
+                self.proj_edge = nn.Sequential(nn.Linear(dim, dim), nn.LayerNorm(dim),
+                                            nn.ReLU(inplace=True))
+                self.norm_edge = nn.LayerNorm(dim)
+            self.update_rpe = update_rpe
         self.dropout2 = nn.Dropout(drop)
 
     def forward_pre(
@@ -167,8 +169,10 @@ class Block(nn.Module):
             tgt_x = src.unsqueeze(2).repeat(1, 1, N, 1)
             kv = self.proj_memory(
                 torch.cat([position_bias, src_x, tgt_x], dim=-1))
-            position_bias = self.norm_edge(
-                position_bias + self.proj_edge(kv))  # (N, N, d_edge)
+            if self.update_rpe:
+                position_bias = self.norm_edge(
+                    position_bias + self.proj_edge(kv))  # (N, N, d_edge)
+                position_bias = position_bias.reshape(B * N, N, D)
             src = src.unsqueeze(2)
             # pre norm: before atten and ffn
             src_mask = key_padding_mask.unsqueeze(1).repeat(1, N, 1)
@@ -176,7 +180,6 @@ class Block(nn.Module):
             key_padding_mask = src_mask & tgt_mask
             src = src.reshape(B * N, 1, D)
             kv = kv.reshape(B * N, N, D)
-            position_bias = position_bias.reshape(B * N, N, D)
             key_padding_mask = key_padding_mask.reshape(B * N, N)
             kv = self.norm1(kv)
             src2 = self.normq(src)
@@ -347,11 +350,12 @@ class CrossAttenderBlock(nn.Module):
         key_padding_mask: Optional[Tensor] = None,
     ):
         if self.post_norm:
-            return self.forward_post(src=src,
-                                     k=key,
-                                     v=value,
-                                     mask=mask,
-                                     key_padding_mask=key_padding_mask)
+            # return self.forward_post(src=src,
+            #                          k=key,
+            #                          v=value,
+            #                          mask=mask,
+            #                          key_padding_mask=key_padding_mask)
+            return False
 
         return self.forward_pre(src=src,
                                 k=key,
