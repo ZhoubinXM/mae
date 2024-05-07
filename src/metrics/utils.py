@@ -19,7 +19,7 @@ def sort_predictions(predictions, probability, k=6):
 
 
 def sort_multi_predictions(predictions, probability, k=6):
-    """Sort the predictions based on the probability of each mode. descending low->high
+    """Sort the predictions based on the probability of each mode. descending high->low
     Args:
         predictions (torch.Tensor): The predicted trajectories [b, a, k, t, 2].
         probability (torch.Tensor): The probability of each mode [b, k].
@@ -33,5 +33,5 @@ def sort_multi_predictions(predictions, probability, k=6):
     sorted_prob = torch.gather(probability, -1, indices)
     sorted_predictions = predictions[torch.arange(B)[..., None, None],
                                      torch.arange(A)[None, ..., None],
-                                     indices.unsqueeze(1).repeat(1, A, 1), :]
-    return sorted_predictions[:, :, :k], sorted_prob[:, :k]
+                                     indices, :]
+    return sorted_predictions[:, :, :k], sorted_prob[:, :, :k]

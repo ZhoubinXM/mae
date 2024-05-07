@@ -96,25 +96,30 @@ class Trainer(pl.LightningModule):
         valid_mask[~x_scored] = False  # [b,n,t]
         valid_mask = valid_mask.unsqueeze(2).float()  # [b,n,1,t]
 
-        scene_avg_ade = (torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
-                         valid_mask).sum(dim=(-1, -3)) / valid_mask.sum(
-                             dim=(-1, -3))
+        if len(pi.shape) == 4:
+            scene_avg_ade = (torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
+                            valid_mask).sum(dim=(-1)) / (valid_mask.sum(
+                                dim=(-1))+1e-10)
+        else:
+            scene_avg_ade = (torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
+                            valid_mask).sum(dim=(-1, -3)) / valid_mask.sum(
+                                dim=(-1, -3))
         best_mode = torch.argmin(scene_avg_ade, dim=-1)
         y_hat_best = y_hat[
-            # torch.arange(y_hat.shape[0]).unsqueeze(1),
-            torch.arange(y_hat.shape[0]),
-            # torch.arange(y_hat.shape[1]).unsqueeze(0),
-            :,
+            torch.arange(y_hat.shape[0]).unsqueeze(1),
+            # torch.arange(y_hat.shape[0]),
+            torch.arange(y_hat.shape[1]).unsqueeze(0),
+            # :,
             best_mode,
             :,
             :,
         ]
         if "y_propose" in outputs.keys():
             y_propose_best = y_propose[
-                # torch.arange(y_propose.shape[0]).unsqueeze(1),
-                torch.arange(y_propose.shape[0]),
-                # torch.arange(y_propose.shape[1]).unsqueeze(0),
-                :,
+                torch.arange(y_propose.shape[0]).unsqueeze(1),
+                # torch.arange(y_propose.shape[0]),
+                torch.arange(y_propose.shape[1]).unsqueeze(0),
+                # :,
                 best_mode,
                 :,
                 :,
@@ -129,10 +134,10 @@ class Trainer(pl.LightningModule):
                                                 y[reg_mask])
         else:
             propose_reg_loss = torch.tensor(0)
-        # cls_loss = F.cross_entropy(
-        #     pi.view(-1, pi.size(-1))[reg_mask.all(-1).view(-1)],
-        #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
-        cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
+        cls_loss = F.cross_entropy(
+            pi.view(-1, pi.size(-2))[reg_mask.all(-1).view(-1)],
+            best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
+        # cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
 
         loss = 0.4 * reg_loss + 0.2 * cls_loss + 0.4 * propose_reg_loss
         out = {
