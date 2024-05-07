@@ -352,7 +352,7 @@ class SceneSimplDecoder(nn.Module):
 
         y_hat = self.traj_decoder(x_actors).view(B, K, N, self.future_steps,
                                                  2).permute(0, 2, 1, 3, 4)
-        y_hat = torch.cumsum(y_hat, dim=-2)
+        # y_hat = torch.cumsum(y_hat, dim=-2)
         pi = self.prob_decoder(cls_token).view(B, K)
 
         return {"y_hat": y_hat, "pi": pi}

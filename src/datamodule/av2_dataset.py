@@ -102,7 +102,7 @@ def collate_fn(batch):
     data["origin"] = torch.cat([b["origin"] for b in batch], dim=0)
     data["theta"] = torch.cat([b["theta"] for b in batch])
 
-    data = data_augmentation(data)
+    # data = data_augmentation(data)
 
     scene_ctrs = torch.cat([data['x_centers'], data["lane_centers"]], dim=1)
     x_vets = torch.stack([data['x_theta'].cos(),

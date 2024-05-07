@@ -92,6 +92,6 @@ class ModelMultiAgent(nn.Module):
     def forward(self, data):
         agent_feat = self.agent_encoder(data)
         lane_actor_feat = self.lane_encoder(data)
-        scene_feat, rel_pos = self.scene_encoder(data, agent_feat,
+        scene_feat, _ = self.scene_encoder(data, agent_feat,
                                                  lane_actor_feat)
         return self.scene_decoder(data, scene_feat, agent_feat)
