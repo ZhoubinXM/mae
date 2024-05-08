@@ -33,5 +33,5 @@ def sort_multi_predictions(predictions, probability, k=6):
     sorted_prob = torch.gather(probability, -1, indices)
     sorted_predictions = predictions[torch.arange(B)[..., None, None],
                                      torch.arange(A)[None, ..., None],
-                                     indices, :]
-    return sorted_predictions[:, :, :k], sorted_prob[:, :, :k]
+                                     indices[:,None,:].repeat(1,A,1), :]
+    return sorted_predictions[:, :, :k], sorted_prob[:, :k]

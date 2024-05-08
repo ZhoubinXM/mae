@@ -172,23 +172,23 @@ class SceneDecoder(nn.Module):
             output_dim=future_steps * 2,
         )
 
-        # self.scene_query = nn.Parameter(torch.randn(self.num_modes,
-        #                                             hidden_dim))
-        # self.scene_2_mode = nn.ModuleList([
-        #     CrossAttenderBlock(
-        #         hidden_dim,
-        #         num_heads=num_head,
-        #         attn_drop=dropout,
-        #         kdim=hidden_dim,
-        #         vdim=hidden_dim,
-        #         post_norm=post_norm,
-        #         drop=dropout,
-        #         act_layer=act_layer,
-        #         norm_layer=norm_layer,
-        #         attn_bias=attn_bias,
-        #         ffn_bias=ffn_bias,
-        #     ) for _ in range(scene_score_depth)
-        # ])
+        self.scene_query = nn.Parameter(torch.randn(self.num_modes,
+                                                    hidden_dim))
+        self.scene_2_mode = nn.ModuleList([
+            CrossAttenderBlock(
+                hidden_dim,
+                num_heads=num_head,
+                attn_drop=dropout,
+                kdim=hidden_dim,
+                vdim=hidden_dim,
+                post_norm=post_norm,
+                drop=dropout,
+                act_layer=act_layer,
+                norm_layer=norm_layer,
+                attn_bias=attn_bias,
+                ffn_bias=ffn_bias,
+            ) for _ in range(scene_score_depth)
+        ])
 
         self.prob_decoder = MLPLayer(
             input_dim=hidden_dim,
@@ -312,19 +312,18 @@ class SceneDecoder(nn.Module):
             y_hat = loc_propose_pos.reshape(B, N, self.num_modes, self.future_steps,
                                         2)
         # Scene scoring module using cross attention
-        traj_query = (traj_query.reshape(B, N, self.num_modes, -1))
-            #           .permute(
-            # 0, 2, 1, 3).reshape(B * self.num_modes, N, -1))
-        # traj_mask = data["x_key_padding_mask"].unsqueeze(1).repeat(
-        #     1, self.num_modes, 1, 1).reshape(B * self.num_modes, N)
+        traj_query = (traj_query.reshape(B, N, self.num_modes, -1).permute(
+            0, 2, 1, 3).reshape(B, self.num_modes * N, -1)).unsqueeze(1).repeat(1, self.num_modes,1,1).reshape(B* self.num_modes, self.num_modes * N, -1)
+        traj_mask = data["x_key_padding_mask"].unsqueeze(1).unsqueeze(1).repeat(
+            1, self.num_modes, self.num_modes, 1, 1).reshape(B*self.num_modes, self.num_modes * N)
 
-        # scene_query = (self.scene_query.unsqueeze(0).unsqueeze(2).repeat(
-        #     B, 1, 1, 1).reshape(B * self.num_modes, 1, D))
-        # for blk in self.scene_2_mode:
-        #     scene_query = blk(scene_query, traj_query, traj_query,  key_padding_mask=traj_mask)
-        # scene_query = scene_query.reshape(B, self.num_modes, D)
+        scene_query = (self.scene_query.unsqueeze(0).unsqueeze(2).repeat(
+            B, 1, 1, 1).reshape(B*self.num_modes, 1, D))
+        for blk in self.scene_2_mode:
+            scene_query = blk(scene_query, traj_query, traj_query,  key_padding_mask=traj_mask)
+        scene_query = scene_query.reshape(B, self.num_modes, D)
 
-        pi = self.prob_decoder(traj_query)
+        pi = self.prob_decoder(scene_query)
 
         if self.use_refine:
             return {

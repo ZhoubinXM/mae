@@ -106,20 +106,20 @@ class Trainer(pl.LightningModule):
                                 dim=(-1, -3))
         best_mode = torch.argmin(scene_avg_ade, dim=-1)
         y_hat_best = y_hat[
-            torch.arange(y_hat.shape[0]).unsqueeze(1),
-            # torch.arange(y_hat.shape[0]),
-            torch.arange(y_hat.shape[1]).unsqueeze(0),
-            # :,
+            # torch.arange(y_hat.shape[0]).unsqueeze(1),
+            torch.arange(y_hat.shape[0]),
+            # torch.arange(y_hat.shape[1]).unsqueeze(0),
+            :,
             best_mode,
             :,
             :,
         ]
         if "y_propose" in outputs.keys():
             y_propose_best = y_propose[
-                torch.arange(y_propose.shape[0]).unsqueeze(1),
-                # torch.arange(y_propose.shape[0]),
-                torch.arange(y_propose.shape[1]).unsqueeze(0),
-                # :,
+                # torch.arange(y_propose.shape[0]).unsqueeze(1),
+                torch.arange(y_propose.shape[0]),
+                # torch.arange(y_propose.shape[1]).unsqueeze(0),
+                :,
                 best_mode,
                 :,
                 :,
@@ -134,10 +134,10 @@ class Trainer(pl.LightningModule):
                                                 y[reg_mask])
         else:
             propose_reg_loss = torch.tensor(0)
-        cls_loss = F.cross_entropy(
-            pi.view(-1, pi.size(-2))[reg_mask.all(-1).view(-1)],
-            best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
-        # cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
+        # cls_loss = F.cross_entropy(
+        #     pi.view(-1, pi.size(-2))[reg_mask.all(-1).view(-1)],
+        #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
+        cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
 
         loss = 0.4 * reg_loss + 0.2 * cls_loss + 0.4 * propose_reg_loss
         out = {
