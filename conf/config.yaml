@@ -10,13 +10,13 @@ save_top_k: 1
 data_root: /home/jerome.zhou/data/av2
 checkpoint: 
 pretrained_weights:
-output: spa_6_propose_2_no_refine
+output: spa_6_propose_3_refine_3_scene_score_2_cumsum_0.00015_lw91
 
 # trainer
 num_workers: 8
 gpus: [0,1,2,3,4,5,6,7]
 sync_bn: true
-batch_size: 4
+batch_size: 2
 epochs: 60
 warmup_epochs: 10
 post_norm: False
@@ -24,7 +24,7 @@ road_embed_type: transform
 tempo_embed_type: norm
 
 # optimizer
-lr: 0.0002
+lr: 0.00015
 weight_decay: 1e-4
 gradient_clip_val: 
 gradient_clip_algorithm: 

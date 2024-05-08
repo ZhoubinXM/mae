@@ -285,8 +285,8 @@ class CrossAttenderBlock(nn.Module):
         self.post_norm = post_norm
 
         self.norm1 = norm_layer(dim)
-        self.normk = norm_layer(dim)
-        self.normv = norm_layer(dim)
+        self.normkv = norm_layer(dim)
+        # self.normv = norm_layer(dim)
         self.attn = torch.nn.MultiheadAttention(
             dim,
             num_heads=num_heads,
@@ -351,15 +351,17 @@ class CrossAttenderBlock(nn.Module):
             src = src.unsqueeze(2).reshape(B * N * 6, 1, D)
             kv = kv.reshape(B * N * 6, M, D)
             key_padding_mask = key_padding_mask.reshape(B * N * 6, M)
-            k = kv
-            v = kv
+            # k = kv
+            # v = kv
+        else:
+            kv = k
         src2 = self.norm1(src)
-        k = self.normk(k)
-        v = self.normv(v)
+        kv = self.normkv(kv)
+        # v = self.normv(v)
         src2 = self.attn(
             query=src2,
-            key=k,
-            value=v,
+            key=kv,
+            value=kv,
             attn_mask=mask,
             key_padding_mask=key_padding_mask,
         )[0]

@@ -36,12 +36,12 @@ class SceneDecoder(nn.Module):
         self.num_modes = num_modes
         self.use_refine = True
 
-        self.x_pos_embed = MLPLayer(input_dim=5,
-                                    hidden_dim=hidden_dim * 4,
-                                    output_dim=hidden_dim)
-        self.x_scene_pos_embed = MLPLayer(input_dim=5,
-                                          hidden_dim=hidden_dim * 4,
-                                          output_dim=hidden_dim)
+        # self.x_pos_embed = MLPLayer(input_dim=5,
+        #                             hidden_dim=hidden_dim * 4,
+        #                             output_dim=hidden_dim)
+        # self.x_scene_pos_embed = MLPLayer(input_dim=5,
+        #                                   hidden_dim=hidden_dim * 4,
+        #                                   output_dim=hidden_dim)
 
         self.agent_traj_query = nn.Parameter(
             torch.randn(self.num_modes, hidden_dim))
@@ -199,7 +199,7 @@ class SceneDecoder(nn.Module):
         self.apply(weight_init)
 
     def forward(self, data: dict, scene_feat: torch.Tensor,
-                agent_pos_emb: torch.Tensor):
+                agent_pos_emb: torch.Tensor, scene_rel_pos: torch.Tensor):
         B, N, D = agent_pos_emb.shape
         scene_padding_mask = torch.cat(
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
@@ -211,8 +211,10 @@ class SceneDecoder(nn.Module):
         # locs_propose_pos: List[Optional[
         #     torch.Tensor]] = [None] * self.num_recurrent_steps
         # mode2scene
-        x_scene_rel_pos = self.x_scene_pos_embed(data["x_scene_rpe"])
-        x_rel_pos = self.x_pos_embed(data["x_rpe"])  # [B,N,N,D]
+        # x_scene_rel_pos = self.x_scene_pos_embed(data["x_scene_rpe"])
+        x_scene_rel_pos = scene_rel_pos[:, :N, ...].clone()
+        # x_rel_pos = self.x_pos_embed(data["x_rpe"])  # [B,N,N,D]
+        x_rel_pos = scene_rel_pos[:, :N, :N, ...].clone()
         x_rel_pos = (x_rel_pos[:, None, :, None, :, :].repeat(
             1, self.num_modes, 1, self.num_modes, 1,
             1).reshape(B, self.num_modes * N, self.num_modes * N, D))
