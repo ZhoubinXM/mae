@@ -19,7 +19,7 @@ class Av2ExtractorMultiAgentNorm:
 
     def __init__(
         self,
-        radius: float = 150,
+        radius: float = 200,
         save_path: Path = None,
         mode: str = "train",
         ignore_type: List[int] = [5, 6, 7, 8, 9],
@@ -27,7 +27,7 @@ class Av2ExtractorMultiAgentNorm:
     ) -> None:
         self.save_path = save_path
         self.mode = mode
-        self.radius = radius
+        self.radius = 200
         self.remove_outlier_actors = remove_outlier_actors
         self.ignore_type = ignore_type
 

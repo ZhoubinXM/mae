@@ -7,10 +7,10 @@ seed: 2333
 monitor: val_AvgMinFDE
 save_top_k: 1
 
-data_root: /data/jerome.zhou/prediction_dataset/av2
-checkpoint: 
+data_root: /home/jerome.zhou/data/av2
+checkpoint:
 pretrained_weights:
-output: spa_3_propose_1_refine_1_scene_1_no_rel-decoder
+output: spa_6_propose_1_refine_1_scene_1_no_rel-decoder_0.0002
 
 # trainer
 num_workers: 8

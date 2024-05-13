@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List
 
 import ray
+import os
 from tqdm import tqdm
 import time
 import multiprocessing
@@ -20,7 +21,12 @@ from src.utils.ray_utils import ActorHandle, ProgressBar
 
 def glob_files(data_root: Path, mode: str):
     file_root = data_root / mode
-    scenario_files = list(file_root.rglob("*.parquet"))
+    # scenario_files = list(file_root.rglob("*.parquet"))
+    file_ext = ".parquet"  # 文件扩展名
+    scenario_files = [Path(os.path.join(file_root, dir_name, file_name))
+             for dir_name in os.listdir(file_root)
+             for file_name in os.listdir(os.path.join(file_root, dir_name))
+             if file_name.endswith(file_ext)]
     return scenario_files
 
 
@@ -45,7 +51,7 @@ def preprocess(args):
                 extractor = Av2ExtractorMultiAgent(save_path=save_dir,
                                                    mode=mode)
             else:
-                save_dir = data_root / "multiagent-baseline-norm" / mode
+                save_dir = data_root / "multiagent-baseline-norm-200" / mode
                 extractor = Av2ExtractorMultiAgentNorm(save_path=save_dir,
                                                        mode=mode)
         else:
@@ -79,11 +85,11 @@ def preprocess(args):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--data_root", "-d", type=str, required=True)
+    parser.add_argument("--data_root", "-d", type=str, default="/home/jerome.zhou/data/av2")
     parser.add_argument("--batch", "-b", type=int, default=50)
-    parser.add_argument("--parallel", "-p", action="store_true")
-    parser.add_argument("--multiagent", "-m", action="store_true")
-    parser.add_argument("--norm", "-n", action="store_true")
+    parser.add_argument("--parallel", "-p", default=True)
+    parser.add_argument("--multiagent", "-m", default=True)
+    parser.add_argument("--norm", "-n", default=True)
 
     args = parser.parse_args()
     preprocess(args)
