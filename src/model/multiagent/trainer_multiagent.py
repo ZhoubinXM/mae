@@ -3,6 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchmetrics import MetricCollection
+import matplotlib.pyplot as plt
+from pathlib import Path
+import os
 
 from src.metrics import AvgMinADE, AvgMinFDE, ActorMR
 from src.utils.optim import WarmupCosLR
@@ -93,17 +96,19 @@ class Trainer(pl.LightningModule):
 
         # TODO: only consider scored agents
         valid_mask = ~y_padding_mask
+        # valid_mask[data["x_padding_mask"][
+            # ..., :49].any(-1) & ~x_scored] = False  # 将valid mask中当前帧元素为True的所有值变成False
         valid_mask[~x_scored] = False  # [b,n,t]
         valid_mask = valid_mask.unsqueeze(2).float()  # [b,n,1,t]
 
         if len(pi.shape) == 4:
-            scene_avg_ade = (torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
-                            valid_mask).sum(dim=(-1)) / (valid_mask.sum(
-                                dim=(-1))+1e-10)
+            scene_avg_ade = (
+                torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
+                valid_mask).sum(dim=(-1)) / (valid_mask.sum(dim=(-1)) + 1e-10)
         else:
-            scene_avg_ade = (torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
-                            valid_mask).sum(dim=(-1, -3)) / valid_mask.sum(
-                                dim=(-1, -3))
+            scene_avg_ade = (
+                torch.norm(y_hat[..., :2] - y.unsqueeze(2), dim=-1) *
+                valid_mask).sum(dim=(-1, -3)) / valid_mask.sum(dim=(-1, -3))
         best_mode = torch.argmin(scene_avg_ade, dim=-1)
         y_hat_best = y_hat[
             # torch.arange(y_hat.shape[0]).unsqueeze(1),
@@ -125,6 +130,8 @@ class Trainer(pl.LightningModule):
                 :,
             ]
         reg_mask = ~y_padding_mask  # [b,n,t]
+        # valid_mask[data["x_padding_mask"][
+        #     ..., :49].any(-1) & ~x_scored] = False  # 将valid mask中当前帧元素为True的所有值变成False
         reg_mask[~x_scored] = False
         # y_hat_best = y_hat[torch.arange(y_hat.shape[0]), best_mode]
 
@@ -137,7 +144,8 @@ class Trainer(pl.LightningModule):
         # cls_loss = F.cross_entropy(
         #     pi.view(-1, pi.size(-2))[reg_mask.all(-1).view(-1)],
         #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
-        cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
+        cls_loss = F.cross_entropy(pi.squeeze(-1),
+                                   best_mode.detach())
 
         loss = 0.45 * reg_loss + 0.1 * cls_loss + 0.45 * propose_reg_loss
         out = {
@@ -170,7 +178,34 @@ class Trainer(pl.LightningModule):
     def validation_step(self, data, batch_idx):
         outputs = self(data)
         res = self.cal_loss(outputs, data)
-        metrics = self.val_metrics(outputs, data["y"], data["x_scored"])
+        theta = data["x_theta"].double()
+        y_hat = outputs['y_hat']
+        B, N, K, T, _ = y_hat.shape
+        rotate_mat = torch.stack(
+            [
+                torch.cos(theta),
+                torch.sin(theta),
+                -torch.sin(theta),
+                torch.cos(theta),
+            ],
+            dim=-1,
+        ).view(B, N, 1, 2, 2)
+        y_hat = (torch.matmul(y_hat[..., :2].double(), rotate_mat))
+        outputs['y_hat'] = y_hat
+        rotate_mat = torch.stack(
+            [
+                torch.cos(theta),
+                torch.sin(theta),
+                -torch.sin(theta),
+                torch.cos(theta),
+            ],
+            dim=-1,
+        ).view(B, N, 2, 2)
+        y_label = ((torch.matmul(data['y'][..., :2].double(), rotate_mat)))
+        metrics = self.val_metrics(outputs, y_label, data["x_scored"])
+        # viz batched data
+        if False:
+            viz_batched_data(data, outputs)
 
         for k, v in res.items():
             if k.endswith("loss"):
@@ -195,6 +230,18 @@ class Trainer(pl.LightningModule):
     def test_step(self, data, batch_idx) -> None:
         outputs = self(data)
         y_hat, pi = outputs["y_hat"], outputs["pi"]
+        theta = data["x_theta"].double()
+        B, N, K, T, _ = y_hat.shape
+        rotate_mat = torch.stack(
+            [
+                torch.cos(theta),
+                torch.sin(theta),
+                -torch.sin(theta),
+                torch.cos(theta),
+            ],
+            dim=-1,
+        ).view(B, N, 1, 2, 2)
+        y_hat = (torch.matmul(y_hat[..., :2].double(), rotate_mat))
         y_hat = y_hat.permute(0, 2, 1, 3, 4)
         pi = pi.squeeze(-1)
 
@@ -283,3 +330,124 @@ class Trainer(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer=optimizer, T_max=self.epochs, eta_min=0)
         return [optimizer], [scheduler]
+
+
+def viz_batched_data(data, predictions):
+    B, N, T, _ = data['x'].shape
+    _, M, L, _ = data["lane_positions_orignal"].shape
+    theta = data["x_theta"].double()
+    rotate_mat = torch.stack(
+        [
+            torch.cos(theta),
+            torch.sin(theta),
+            -torch.sin(theta),
+            torch.cos(theta),
+        ],
+        dim=-1,
+    ).view(B, N, 2, 2)
+    rotate_mat_mode = rotate_mat.view(B, N, 1, 2, 2)
+    y_predict = (torch.matmul(predictions['y_hat'][..., :2].double(),
+                              rotate_mat_mode).cpu())
+    y_scene = ((torch.matmul(data['y'][..., :2].double(), rotate_mat) +
+                data['x_centers'].view(B, N, 1, 2).double()).cpu().numpy())
+    # each batch is a single sceneario
+    for bs in range(B):
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(27, 9))
+        # Plot trajectory
+        hist_traj = data['x_positions'][bs].cpu()
+        # y = data['y'][bs]
+        padding_mask = data['x_padding_mask'][bs].cpu()
+        lane_padding_mask = data["lane_padding_mask"][bs].cpu()
+
+        # scene
+        for n in range(N):
+            hist_traj_valid = hist_traj[n][:T][~padding_mask[n][:T]]
+            ax1.plot(hist_traj_valid[:, 0],
+                     hist_traj_valid[:, 1],
+                     linestyle='-',
+                     color='g',
+                     alpha=1)
+            ax2.plot(hist_traj_valid[:, 0],
+                     hist_traj_valid[:, 1],
+                     linestyle='-',
+                     color='g',
+                     alpha=1)
+            ax3.plot(hist_traj_valid[:, 0],
+                     hist_traj_valid[:, 1],
+                     linestyle='-',
+                     color='g',
+                     alpha=1)
+            # y_traj_valid = y[n][~padding_mask[n][T:]] + hist_traj[n][49]
+            y_traj_valid = hist_traj[n][T:][~padding_mask[n][T:]]
+            y_traj_rot = y_scene[bs, n][~padding_mask[n][T:]]
+            ax1.plot(y_traj_valid[:, 0],
+                     y_traj_valid[:, 1],
+                     linestyle='-',
+                     color='r',
+                     alpha=1)
+            ax2.plot(y_traj_rot[:, 0],
+                     y_traj_rot[:, 1],
+                     linestyle='-',
+                     color='r',
+                     alpha=1)
+            ax3.plot(y_traj_rot[:, 0],
+                     y_traj_rot[:, 1],
+                     linestyle='-',
+                     color='r',
+                     alpha=1)
+        # Plot road map
+        road = data["lane_positions_orignal"][bs].cpu()
+        for m in range(M):
+            road_valid = road[m][~lane_padding_mask[m][:L]]
+            ax1.plot(road_valid[:, 0],
+                     road_valid[:, 1],
+                     linestyle='-',
+                     color='grey',
+                     alpha=0.7)
+            ax2.plot(road_valid[:, 0],
+                     road_valid[:, 1],
+                     linestyle='-',
+                     color='grey',
+                     alpha=0.7)
+            ax3.plot(road_valid[:, 0],
+                     road_valid[:, 1],
+                     linestyle='-',
+                     color='grey',
+                     alpha=0.7)
+
+        # Plot predictions result
+        pred_traj = y_predict[bs]
+        pred_score = predictions['pi'][bs].cpu().detach()
+        pred_score = torch.softmax(pred_score.squeeze().double(), dim=-1)
+        sorted_indices = torch.argsort(pred_score)
+        ranks = torch.empty_like(sorted_indices)
+        ranks[sorted_indices] = torch.arange(len(pred_score))
+        colors = ['y', 'y', 'y', 'y', 'y', 'b']
+
+        x_scored = data['x_scored'][bs]
+        _, K, fut_steps, _ = pred_traj.shape
+        for n in range(N):
+            for k in range(K):
+                alpha = 1 if ranks[k] == 5 else 0.5
+                ax2.plot(pred_traj[n,k,:,0] + hist_traj[n, 49, 0], pred_traj[n,k,:,1]+hist_traj[n, 49, 1], \
+                         linestyle='-', color=(colors[ranks[k]]), alpha=alpha)
+                ax2.plot((pred_traj[n,k,:,0] + hist_traj[n, 49, 0])[-1], \
+                                     (pred_traj[n,k,:,1]+hist_traj[n, 49, 1])[-1], 'o', color=(colors[ranks[k]]), markersize=2.5, alpha=alpha)
+                # ax2.text((pred_traj[n,k,:,0] + hist_traj[n, 49, 0])[-1], (pred_traj[n,k,:,1]+hist_traj[n, 49, 1])[-1], f"{pred_score[k]:.2f}", fontsize=4)
+                if x_scored[n]:
+                    ax3.plot(pred_traj[n,k,:,0] + hist_traj[n, 49, 0], pred_traj[n,k,:,1]+hist_traj[n, 49, 1], \
+                         linestyle='-', color=(colors[ranks[k]]), alpha=alpha)
+                    ax3.plot((pred_traj[n,k,:,0] + hist_traj[n, 49, 0])[-1], \
+                                        (pred_traj[n,k,:,1]+hist_traj[n, 49, 1])[-1], 'o', color=(colors[ranks[k]]), markersize=2.5, alpha=alpha)
+        # ax3.text((pred_traj[n, k, :, 0] + hist_traj[n, 49, 0])[-1],
+        #          (pred_traj[n, k, :, 1] + hist_traj[n, 49, 1])[-1],
+        #          f"{pred_score[k]:.2f}",
+        #          fontsize=4)
+
+        ax1.set_title('Scene')
+        ax2.set_title('Prediction')
+        ax3.set_title('Prediction Scored')
+        save_dir = Path(os.getcwd()) / Path("viz/multiagent/")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = save_dir / Path(f"{data['scenario_id'][bs]}.png")
+        plt.savefig(save_path)

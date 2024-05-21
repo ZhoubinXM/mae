@@ -97,10 +97,10 @@ class LaneEncoder(nn.Module):
 
         lane_query = self.lane_vector_query[None, :, :].repeat(
             lane_actor_feat.shape[0], 1, 1)
-        lane_actor_feat = torch.cat([lane_query, lane_actor_feat], dim=1)
-        lane_pt_padding_mask = torch.cat([
+        lane_actor_feat = torch.cat([lane_actor_feat, lane_query], dim=1)
+        lane_pt_padding_mask = torch.cat([lane_pt_padding_mask,
             torch.zeros([B * M, 1]).to(lane_padding_mask.dtype).to(
-                lane_padding_mask.device), lane_pt_padding_mask
+                lane_padding_mask.device)
         ],
                                       dim=1)
         
@@ -118,7 +118,7 @@ class LaneEncoder(nn.Module):
                                           lane_actor_feat.shape[-1],
                                           device=lane_actor_feat.device)
 
-        lane_actor_feat_tmp[~lane_padding_mask] = lane_actor_feat[:, 0].clone()
+        lane_actor_feat_tmp[~lane_padding_mask] = lane_actor_feat[:, -1].clone()
         lane_actor_feat = lane_actor_feat_tmp.reshape(B, M, -1)
 
         # lane_centers = data["lane_positions"][:, :, 0].to(torch.float32)

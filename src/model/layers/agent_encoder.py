@@ -108,10 +108,10 @@ class AgentEncoder(nn.Module):
 
         agent_tempo_query = self.agent_tempo_query[None, :, :].repeat(
             agent_feat.shape[0], 1, 1)
-        agent_feat = torch.cat([agent_tempo_query, agent_feat], dim=1)
-        agent_hist_padding_mask = torch.cat([
+        agent_feat = torch.cat([agent_feat, agent_tempo_query], dim=1)
+        agent_hist_padding_mask = torch.cat([agent_hist_padding_mask,
             torch.zeros([B * N, 1]).to(agent_hist_padding_mask.dtype).to(
-                agent_hist_padding_mask.device), agent_hist_padding_mask
+                agent_hist_padding_mask.device)
         ],
                                             dim=1)
 
@@ -127,7 +127,7 @@ class AgentEncoder(nn.Module):
                                      agent_feat.shape[-1],
                                      device=agent_feat.device)
 
-        agent_feat_tmp[~agent_padding_mask] = agent_feat[:, 0].clone()
+        agent_feat_tmp[~agent_padding_mask] = agent_feat[:, -1].clone()
         agent_feat = agent_feat_tmp.reshape(B, N, agent_feat.shape[-1])
 
         # x_positions = data["x_positions"][:, :, 49]  # [B, N, 2]
