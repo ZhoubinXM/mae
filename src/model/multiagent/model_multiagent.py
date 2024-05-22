@@ -65,19 +65,19 @@ class ModelMultiAgent(nn.Module):
             tempo_depth=encoder_depth,
         )
 
-        # Scene Encoder
-        self.scene_encoder = SceneEncoder(
-            hidden_dim=embed_dim,
-            embedding_type=embedding_type,
-            num_head=num_heads,
-            dropout=dropout,
-            act_layer=act_layer,
-            norm_layer=norm_layer,
-            post_norm=False,
-            attn_bias=attn_bias,
-            ffn_bias=ffn_bias,
-            spa_depth=spa_depth,
-        )
+        # # Scene Encoder
+        # self.scene_encoder = SceneEncoder(
+        #     hidden_dim=embed_dim,
+        #     embedding_type=embedding_type,
+        #     num_head=num_heads,
+        #     dropout=dropout,
+        #     act_layer=act_layer,
+        #     norm_layer=norm_layer,
+        #     post_norm=False,
+        #     attn_bias=attn_bias,
+        #     ffn_bias=ffn_bias,
+        #     spa_depth=spa_depth,
+        # )
 
         # Scene Decoder
         self.scene_decoder = SceneDecoder(
@@ -98,7 +98,7 @@ class ModelMultiAgent(nn.Module):
         )
 
     def forward(self, data):
-        agent_feat = self.agent_encoder(data)
         lane_actor_feat = self.lane_encoder(data)
-        scene_feat, _ = self.scene_encoder(data, agent_feat, lane_actor_feat)
-        return self.scene_decoder(data, scene_feat, agent_feat)
+        agent_feat = self.agent_encoder(data, lane_actor_feat)
+        # scene_feat, _ = self.scene_encoder(data, agent_feat, lane_actor_feat)
+        return self.scene_decoder(data, lane_actor_feat, agent_feat)

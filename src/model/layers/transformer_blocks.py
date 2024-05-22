@@ -334,7 +334,8 @@ class CrossAttenderBlock(nn.Module):
         if position_bias is not None:
             _, N, M, _ = position_bias.shape
             B, M, D = k.shape
-            src_x = k[:, :N].unsqueeze(2).repeat(1, 1, M, 1)
+            _, N, _ = src.shape
+            src_x = src.unsqueeze(2).repeat(1, 1, M, 1)
             tgt_x = k.unsqueeze(1).repeat(1, N, 1, 1)
             kv = self.proj_memory(
                 torch.cat([position_bias, src_x, tgt_x], dim=-1))  # [B,N,M,D]
@@ -343,14 +344,12 @@ class CrossAttenderBlock(nn.Module):
                 position_bias = self.norm_edge(
                     position_bias + self.proj_edge(kv))  # (N, N, d_edge)
                 position_bias = position_bias.reshape(B * N, M, D)
-            kv = kv.unsqueeze(2).repeat(1, 1, 6, 1, 1)  # [B,N,6,M,D]
-            src_mask = key_padding_mask[:, :N].unsqueeze(2).repeat(1, 1, M)
-            tgt_mask = key_padding_mask.unsqueeze(1).repeat(1, N, 1)
-            key_padding_mask = (src_mask & tgt_mask).unsqueeze(2).repeat(
-                1, 1, 6, 1)
-            src = src.unsqueeze(2).reshape(B * N * 6, 1, D)
-            kv = kv.reshape(B * N * 6, M, D)
-            key_padding_mask = key_padding_mask.reshape(B * N * 6, M)
+            src_mask = key_padding_mask[0].unsqueeze(2).repeat(1, 1, M)
+            tgt_mask = key_padding_mask[1].unsqueeze(1).repeat(1, N, 1)
+            key_padding_mask = (src_mask & tgt_mask) # [B, N, M]
+            src = src.unsqueeze(2).reshape(B*N,1,D)  # [B,N,1,D]
+            kv = kv.reshape(B * N, M, D)
+            key_padding_mask = key_padding_mask.reshape(B * N, M)
             k = kv
             v = kv
         src2 = self.norm1(src)
@@ -366,7 +365,7 @@ class CrossAttenderBlock(nn.Module):
         src = src + self.drop_path1(self.dropout2(src2))
         src = src + self.drop_path2(self.mlp(self.norm2(src)))
         if position_bias is not None:
-            return src.squeeze(1).reshape(B, N * 6, D), position_bias.reshape(
+            return src.squeeze(1).reshape(B, N, D), position_bias.reshape(
                 B, N, M, D)
         else:
             return src

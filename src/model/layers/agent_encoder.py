@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from src.model.layers.fourier_embedding import FourierEmbedding
-from src.model.layers.transformer_blocks import Block, MLPLayer
+from src.model.layers.transformer_blocks import Block, MLPLayer, CrossAttenderBlock
 
 from src.utils.weight_init import weight_init
 
@@ -42,7 +42,7 @@ class AgentEncoder(nn.Module):
         else:
             raise NotImplementedError(f"{embedding_type} is not implement!")
 
-        self.agent_tempo_query = nn.Parameter(torch.randn(1, hidden_dim))
+        # self.agent_tempo_query = nn.Parameter(torch.randn(1, hidden_dim))
         self.agent_tempo_net = nn.ModuleList(
             Block(
                 dim=hidden_dim,
@@ -55,19 +55,53 @@ class AgentEncoder(nn.Module):
                 ffn_bias=ffn_bias,
             ) for _ in range(tempo_depth))
 
-        # self.agent_pos_embed = MLPLayer(
-        #     input_dim=agent_pos_input_dim,
-        #     hidden_dim=hidden_dim,
-        #     output_dim=hidden_dim,
-        #     norm_layer=None,
-        # )
+        self.agent_map_net = nn.ModuleList(
+            CrossAttenderBlock(hidden_dim,
+                               num_heads=8,
+                               attn_drop=dropout,
+                               kdim=hidden_dim,
+                               vdim=hidden_dim,
+                               post_norm=post_norm,
+                               drop=dropout,
+                               act_layer=act_layer,
+                               norm_layer=norm_layer,
+                               attn_bias=attn_bias,
+                               ffn_bias=ffn_bias,
+                               use_simpl=True,
+                               update_rpe=tempo_depth - 1 > i)
+            for i in range(tempo_depth))
+
+        self.agent_agent_net = nn.ModuleList(
+            Block(
+                dim=hidden_dim,
+                num_heads=num_head,
+                attn_drop=dropout,
+                post_norm=post_norm,
+                drop=dropout,
+                act_layer=act_layer,
+                norm_layer=norm_layer,
+                attn_bias=attn_bias,
+                ffn_bias=ffn_bias,
+                use_simpl=True,
+                update_rpe=tempo_depth - 1 > i,
+            ) for i in range(tempo_depth))
+
+        self.agent_map_pos_embed = MLPLayer(input_dim=5,
+                                            hidden_dim=hidden_dim * 4,
+                                            output_dim=hidden_dim)
+
+        self.agent_agent_pos_embed = MLPLayer(input_dim=5,
+                                              hidden_dim=hidden_dim * 4,
+                                              output_dim=hidden_dim)
 
         self.apply(weight_init)
 
-    def forward(self, data: dict):
+    def forward(self, data: dict, lane_actor_fea):
+        B, M, D = lane_actor_fea.shape
         agent_hist_padding_mask = data["x_padding_mask"][:, :, :50]
         agent_padding_mask = data["x_key_padding_mask"]
-        agent_hist_angles = data['x_angles'][:, :, :50].contiguous() # instance frame
+        agent_hist_angles = data['x_angles'][:, :, :50].contiguous(
+        )  # instance frame
         # agent_hist_angles_vec = torch.stack(
         #     [agent_hist_angles.cos(),
         #      agent_hist_angles.sin()], dim=-1)
@@ -106,29 +140,64 @@ class AgentEncoder(nn.Module):
         traj_pos_embed = self.traj_hist_position_emb(agent_hist_positions)
         agent_feat = agent_feat + traj_pos_embed
 
-        agent_tempo_query = self.agent_tempo_query[None, :, :].repeat(
-            agent_feat.shape[0], 1, 1)
-        agent_feat = torch.cat([agent_feat, agent_tempo_query], dim=1)
-        agent_hist_padding_mask = torch.cat([agent_hist_padding_mask,
-            torch.zeros([B * N, 1]).to(agent_hist_padding_mask.dtype).to(
-                agent_hist_padding_mask.device)
-        ],
-                                            dim=1)
+        # agent_tempo_query = self.agent_tempo_query[None, :, :].repeat(
+        #     agent_feat.shape[0], 1, 1)
+        # agent_feat = torch.cat([agent_feat, agent_tempo_query], dim=1)
+        # agent_hist_padding_mask = torch.cat([agent_hist_padding_mask,
+        #     torch.zeros([B * N, 1]).to(agent_hist_padding_mask.dtype).to(
+        #         agent_hist_padding_mask.device)
+        # ],
+        #                                     dim=1)
 
+        agent_lane_rel_pos = data['x_hist_lane_rpe']
+        agent_lane_rel_pos = self.agent_map_pos_embed(
+            agent_lane_rel_pos).permute(0, 2, 1, 3, 4).reshape(B * T, N, M, D)
+        agent_agent_rel_pos = data["x_hist_rpe"]
+        agent_agent_rel_pos = self.agent_agent_pos_embed(
+            agent_agent_rel_pos).reshape(B * T, N, N, D)
         # 2. temo net for agent time self attention
-        for agent_tempo_blk in self.agent_tempo_net:
+        for idx, agent_tempo_blk in enumerate(self.agent_tempo_net):
             agent_feat = agent_tempo_blk(
                 agent_feat,
                 key_padding_mask=agent_hist_padding_mask[~agent_padding_mask],
-            )
+            )             # [B*N, T, D]
 
-        # 3. pooling
-        agent_feat_tmp = torch.zeros(B * N,
-                                     agent_feat.shape[-1],
-                                     device=agent_feat.device)
+            # 3. pooling
+            agent_feat_tmp = torch.zeros(B * N,
+                                         T,
+                                         agent_feat.shape[-1],
+                                         device=agent_feat.device)
 
-        agent_feat_tmp[~agent_padding_mask] = agent_feat[:, -1].clone()
-        agent_feat = agent_feat_tmp.reshape(B, N, agent_feat.shape[-1])
+            agent_feat_tmp[~agent_padding_mask] = agent_feat.clone()
+            agent_feat = agent_feat_tmp.reshape(B, N, T, agent_feat.shape[-1])
+
+            agent_feat = agent_feat.permute(0, 2, 1, 3).reshape(B * T, N, D)
+            agent_feat, agent_lane_rel_pos = self.agent_map_net[idx](
+                agent_feat,
+                lane_actor_fea.unsqueeze(1).repeat(1, T, 1,
+                                                   1).reshape(B * T, M, D),
+                lane_actor_fea.unsqueeze(1).repeat(1, T, 1,
+                                                   1).reshape(B * T, M, D),
+                key_padding_mask=[
+                    data["x_padding_mask"][:, :, :50].permute(0, 2, 1).reshape(
+                        B * T,
+                        N), data["lane_key_padding_mask"].unsqueeze(1).repeat(
+                            1, T, 1).reshape(B * T, M)
+                ],
+                position_bias=agent_lane_rel_pos)
+
+            # [B*T, N, D]
+            agent_feat, agent_agent_rel_pos = self.agent_agent_net[idx](
+                agent_feat,
+                key_padding_mask=data["x_padding_mask"][:, :, :50].permute(
+                    0, 2, 1).reshape(B * T, N),
+                position_bias=agent_agent_rel_pos)
+
+            agent_feat = agent_feat.reshape(B, T, N,
+                                            D).permute(0, 2, 1,
+                                                       3).reshape(B * N, T, D)
+            if idx < len(self.agent_tempo_net) - 1:
+                agent_feat = agent_feat[~agent_padding_mask]
 
         # x_positions = data["x_positions"][:, :, 49]  # [B, N, 2]
         # x_angles = data["x_angles"][:, :, 49]  # [B, N]
@@ -145,4 +214,4 @@ class AgentEncoder(nn.Module):
         # agent_feat = agent_feat + x_pos_embed
         # agent_feat = agent_feat.reshape(B, N, -1)
 
-        return agent_feat
+        return agent_feat.reshape(B, N, T, D)

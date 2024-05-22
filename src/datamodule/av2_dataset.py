@@ -109,7 +109,7 @@ def collate_fn(batch):
     scene_vets = torch.cat([x_vets, lane_vets], dim=1)
 
     d_pos = (scene_ctrs.unsqueeze(1) - scene_ctrs.unsqueeze(2)).norm(dim=-1)
-    d_pos = d_pos * 2 / 150  # scale [0, radius] to [0, 2]
+    d_pos = d_pos * 2 / 200  # scale [0, radius] to [0, 2]
     pos_rpe = d_pos.unsqueeze(-1)
 
     ang2ang = _get_rel_pe(scene_vets.unsqueeze(1), scene_vets.unsqueeze(2))
@@ -118,26 +118,64 @@ def collate_fn(batch):
 
     data["rpe"] = torch.cat([ang2ang, ang2vec, pos_rpe], dim=-1)
 
-    x_ctrs = data["x_centers"]
-    x_d_pos = (x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)).norm(dim=-1)
-    x_d_pos = x_d_pos * 2 / 150  # scale [0, radius] to [0, 2]
+    # current frame relative history frame
+    x_ctrs = data["x_centers"].unsqueeze(2).repeat(1, 1, 6, 1)  #[B,N,6,2]
+    x_hists = data["x_positions"][..., :50, :]  #[B,N,50,2]
+    x_d_pos = (x_ctrs.unsqueeze(3) - x_hists.unsqueeze(2)).norm(dim=-1)  # [B, N, 6, T]
+    x_d_pos = x_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
     x_pos_rpe = x_d_pos.unsqueeze(-1)
-    x_ang2ang = _get_rel_pe(x_vets.unsqueeze(1), x_vets.unsqueeze(2))
-    x_v_pos = x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)
-    x_ang2vec = _get_rel_pe(x_vets.unsqueeze(1), x_v_pos)
+    x_vets = x_vets.unsqueeze(2).repeat(1, 1, 6, 1)
+    x_hist_vects = torch.stack(
+        [data['x_angles'][..., :50].cos(), data['x_angles'][..., :50].sin()],
+        dim=-1)  # [B, N, T, 2]
+    x_ang2ang = _get_rel_pe(x_vets.unsqueeze(3), x_hist_vects.unsqueeze(2))
+    x_v_pos = x_ctrs.unsqueeze(3) - x_hists.unsqueeze(2)
+    x_ang2vec = _get_rel_pe(x_vets.unsqueeze(3), x_v_pos)
 
     data["x_rpe"] = torch.cat([x_ang2ang, x_ang2vec, x_pos_rpe], dim=-1)
 
-    x_scene_d_pos = (x_ctrs.unsqueeze(2) -
-                     scene_ctrs.unsqueeze(1)).norm(dim=-1)
-    x_scene_d_pos = x_scene_d_pos * 2 / 150  # scale [0, radius] to [0, 2]
-    x_scene_pos_rpe = x_scene_d_pos.unsqueeze(-1)
-    x_scene_ang2ang = _get_rel_pe(x_vets.unsqueeze(2), scene_vets.unsqueeze(1))
-    x_scene_v_pos = x_ctrs.unsqueeze(2) - scene_ctrs.unsqueeze(1)
-    x_scene_ang2vec = _get_rel_pe(x_vets.unsqueeze(2), x_scene_v_pos)
+    lane_ctrs = data["lane_centers"]
+    B, N, T, _ = x_hists.shape
+    _, M, _ = lane_ctrs.shape
+    x_hist_lane_d_pos = (x_hists.reshape(B, N * T, -1).unsqueeze(2) -
+                         lane_ctrs.unsqueeze(1)).norm(dim=-1)
+    x_hist_lane_d_pos = x_hist_lane_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
+    x_hist_lane_pos_rpe = x_hist_lane_d_pos.unsqueeze(-1)
+    x_hist_vects = x_hist_vects.reshape(B, N * T, -1)
+    x_hist_lane_ang2ang = _get_rel_pe(x_hist_vects.unsqueeze(2),
+                                      lane_vets.unsqueeze(1))
+    x_hist_lane_v_pos = x_hists.reshape(
+        B, N * T, -1).unsqueeze(2) - lane_ctrs.unsqueeze(1)
+    x_hist_lane_ang2vec = _get_rel_pe(x_hist_vects.unsqueeze(2),
+                                      x_hist_lane_v_pos)
 
-    data["x_scene_rpe"] = torch.cat(
-        [x_scene_ang2ang, x_scene_ang2vec, x_scene_pos_rpe], dim=-1)
+    data["x_hist_lane_rpe"] = torch.cat(
+        [x_hist_lane_ang2ang, x_hist_lane_ang2vec, x_hist_lane_pos_rpe],
+        dim=-1).reshape(B, N, T, M, -1)
+    
+    x_hists = data["x_positions"][..., :50, :].permute(0,2,1,3)  #[B,50,N,2]
+    x_hist_d_pos = (x_hists.unsqueeze(3) - x_hists.unsqueeze(2)).norm(dim=-1)
+    x_hist_d_pos = x_hist_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
+    x_hist_pos_rpe = x_hist_d_pos.unsqueeze(-1)
+    x_hist_vects = torch.stack(
+        [data['x_angles'][..., :50].cos(), data['x_angles'][..., :50].sin()],
+        dim=-1).permute(0,2,1,3)
+    x_hist_ang2ang = _get_rel_pe(x_hist_vects.unsqueeze(3), x_hist_vects.unsqueeze(2))
+    x_hist_v_pos = x_hists.unsqueeze(3) - x_hists.unsqueeze(2)
+    x_hist_ang2vec = _get_rel_pe(x_hist_vects.unsqueeze(3), x_hist_v_pos)
+
+    data["x_hist_rpe"] = torch.cat([x_hist_ang2ang, x_hist_ang2vec, x_hist_pos_rpe], dim=-1)
+
+    # x_scene_d_pos = (x_ctrs.unsqueeze(2) -
+    #                  scene_ctrs.unsqueeze(1)).norm(dim=-1)
+    # x_scene_d_pos = x_scene_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
+    # x_scene_pos_rpe = x_scene_d_pos.unsqueeze(-1)
+    # x_scene_ang2ang = _get_rel_pe(x_vets.unsqueeze(2), scene_vets.unsqueeze(1))
+    # x_scene_v_pos = x_ctrs.unsqueeze(2) - scene_ctrs.unsqueeze(1)
+    # x_scene_ang2vec = _get_rel_pe(x_vets.unsqueeze(2), x_scene_v_pos)
+
+    # data["x_scene_rpe"] = torch.cat(
+    #     [x_scene_ang2ang, x_scene_ang2vec, x_scene_pos_rpe], dim=-1)
 
     return data
 
