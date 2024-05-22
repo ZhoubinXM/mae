@@ -269,16 +269,29 @@ class SceneDecoder(nn.Module):
         # for t in range(self.num_recurrent_steps):
         for i in range(0, len(self.cross_attender_propose), 3):
             # Mode&Agent2Scene m: [B*N, mode, D]
-            traj_query, x_hist_rel_pos = self.cross_attender_propose[i](
+            # traj query padding value is nan
+            traj_query = traj_query[~agent_padding_mask]
+            traj_query, x_hist_rel_pos_tmp = self.cross_attender_propose[i](
                 traj_query,
-                agent_feat,
-                agent_feat,
+                agent_feat[~agent_padding_mask],
+                agent_feat[~agent_padding_mask],
                 key_padding_mask=[
                     data['x_key_padding_mask'].unsqueeze(2).repeat(
-                        1, 1, self.num_modes).reshape(B * N, self.num_modes),
-                    data["x_padding_mask"][:, :, :T].reshape(B * N, T)
+                        1, 1, self.num_modes).reshape(
+                            B * N, self.num_modes)[~agent_padding_mask],
+                    data["x_padding_mask"][:, :, :T].reshape(
+                        B * N, T)[~agent_padding_mask]
                 ],
-                position_bias=x_hist_rel_pos)
+                position_bias=x_hist_rel_pos[~agent_padding_mask])
+            x_hist_rel_pos[~agent_padding_mask] = x_hist_rel_pos_tmp
+            # padding
+            traj_query_tmp = torch.zeros(B * N,
+                                         self.num_modes,
+                                         D,
+                                         device=agent_feat.device)
+
+            traj_query_tmp[~agent_padding_mask] = traj_query.clone()
+            traj_query = traj_query_tmp.reshape(B, N, self.num_modes, D)
             traj_query = (traj_query.reshape(B, N, self.num_modes, D).permute(
                 0, 2, 1, 3).reshape(B * self.num_modes, N, D))
 
@@ -356,60 +369,72 @@ class SceneDecoder(nn.Module):
                                                          D)
             for i in range(0, len(self.cross_attender_refine), 3):
                 # m: [B*N, mode, D]
-                traj_query, x_hist_rel_pos = self.cross_attender_refine[i](
+                traj_query = traj_query[~agent_padding_mask]
+                traj_query, x_hist_rel_pos_tmp = self.cross_attender_refine[i](
                     traj_query,
-                    agent_feat,
-                    agent_feat,
+                    agent_feat[~agent_padding_mask],
+                    agent_feat[~agent_padding_mask],
                     key_padding_mask=[
                         data['x_key_padding_mask'].unsqueeze(2).repeat(
-                            1, 1,
-                            self.num_modes).reshape(B * N, self.num_modes),
-                        data["x_padding_mask"][:, :, :50].reshape(B * N, 50)
+                            1, 1, self.num_modes).reshape(
+                                B * N, self.num_modes)[~agent_padding_mask],
+                        data["x_padding_mask"][:, :, :50].reshape(
+                            B * N, 50)[~agent_padding_mask]
                     ],
-                    position_bias=x_hist_rel_pos)
+                    position_bias=x_hist_rel_pos[~agent_padding_mask])
+                x_hist_rel_pos[~agent_padding_mask] = x_hist_rel_pos_tmp
+                # padding
+                traj_query_tmp = torch.zeros(B * N,
+                                             self.num_modes,
+                                             D,
+                                             device=agent_feat.device)
 
+                traj_query_tmp[~agent_padding_mask] = traj_query.clone()
+                traj_query = traj_query_tmp.reshape(B, N, self.num_modes, D)
                 traj_query = (traj_query.reshape(
                     B, N, self.num_modes,
                     D).permute(0, 2, 1, 3).reshape(B * self.num_modes, N, D))
 
                 # m: [B*mode, N, D]
-                traj_query, agent_lane_rel_pos = self.cross_attender_refine[i + 1](
-                    traj_query,
-                    lane_actor_feat.unsqueeze(1).repeat(
-                        1, self.num_modes, 1,
-                        1).reshape(B * self.num_modes, M, D),
-                    lane_actor_feat.unsqueeze(1).repeat(
-                        1, self.num_modes, 1,
-                        1).reshape(B * self.num_modes, M, D),
-                    key_padding_mask=[
-                           data['x_key_padding_mask'].unsqueeze(1).repeat(
-                               1, self.num_modes,
-                               1).reshape(B * self.num_modes, N),
-                           data["lane_key_padding_mask"].unsqueeze(1).repeat(
-                               1, self.num_modes,
-                               1).reshape(B * self.num_modes, M)
-                       ],
-                    position_bias=agent_lane_rel_pos)
+                traj_query, agent_lane_rel_pos = self.cross_attender_refine[
+                    i + 1](
+                        traj_query,
+                        lane_actor_feat.unsqueeze(1).repeat(
+                            1, self.num_modes, 1,
+                            1).reshape(B * self.num_modes, M, D),
+                        lane_actor_feat.unsqueeze(1).repeat(
+                            1, self.num_modes, 1,
+                            1).reshape(B * self.num_modes, M, D),
+                        key_padding_mask=[
+                            data['x_key_padding_mask'].unsqueeze(1).repeat(
+                                1, self.num_modes,
+                                1).reshape(B * self.num_modes, N),
+                            data["lane_key_padding_mask"].unsqueeze(1).repeat(
+                                1, self.num_modes,
+                                1).reshape(B * self.num_modes, M)
+                        ],
+                        position_bias=agent_lane_rel_pos)
 
                 # m: [B*mode, N, D]
                 traj_query, agent_agent_rel_pos = self.cross_attender_refine[
-                    i + 2](
-                        traj_query,
-                        agent_feat[:, -1].reshape(B, N, D).unsqueeze(1).repeat(
-                            1, self.num_modes, 1,
-                            1).reshape(B * self.num_modes, N, D),
-                        agent_feat[:, -1].reshape(B, N, D).unsqueeze(1).repeat(
-                            1, self.num_modes, 1,
-                            1).reshape(B * self.num_modes, N, D),
-                        key_padding_mask=[
-                           data['x_key_padding_mask'].unsqueeze(1).repeat(
-                               1, self.num_modes,
-                               1).reshape(B * self.num_modes, N),
-                           data["x_key_padding_mask"].unsqueeze(1).repeat(
-                               1, self.num_modes,
-                               1).reshape(B * self.num_modes, N)
-                       ],
-                        position_bias=agent_agent_rel_pos)
+                    i + 2](traj_query,
+                           agent_feat[:,
+                                      -1].reshape(B, N, D).unsqueeze(1).repeat(
+                                          1, self.num_modes, 1,
+                                          1).reshape(B * self.num_modes, N, D),
+                           agent_feat[:,
+                                      -1].reshape(B, N, D).unsqueeze(1).repeat(
+                                          1, self.num_modes, 1,
+                                          1).reshape(B * self.num_modes, N, D),
+                           key_padding_mask=[
+                               data['x_key_padding_mask'].unsqueeze(1).repeat(
+                                   1, self.num_modes,
+                                   1).reshape(B * self.num_modes, N),
+                               data["x_key_padding_mask"].unsqueeze(1).repeat(
+                                   1, self.num_modes,
+                                   1).reshape(B * self.num_modes, N)
+                           ],
+                           position_bias=agent_agent_rel_pos)
 
                 # m: [B*N, mode, D]
                 traj_query = (traj_query.reshape(
