@@ -335,6 +335,7 @@ class CrossAttenderBlock(nn.Module):
             _, N, M, _ = position_bias.shape
             B, M, D = k.shape
             _, N, _ = src.shape
+            # TODO: 对于cross attender 是否可以删掉
             src_x = src.unsqueeze(2).repeat(1, 1, M, 1)
             tgt_x = k.unsqueeze(1).repeat(1, N, 1, 1)
             kv = self.proj_memory(
