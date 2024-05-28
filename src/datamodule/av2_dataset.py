@@ -109,7 +109,7 @@ def collate_fn(batch):
     scene_vets = torch.cat([x_vets, lane_vets], dim=1)
 
     d_pos = (scene_ctrs.unsqueeze(1) - scene_ctrs.unsqueeze(2)).norm(dim=-1)
-    d_pos = d_pos * 2 / 150  # scale [0, radius] to [0, 2]
+    d_pos = d_pos * 2 / 200  # scale [0, radius] to [0, 2]
     pos_rpe = d_pos.unsqueeze(-1)
 
     ang2ang = _get_rel_pe(scene_vets.unsqueeze(1), scene_vets.unsqueeze(2))
@@ -120,7 +120,7 @@ def collate_fn(batch):
 
     x_ctrs = data["x_centers"]
     x_d_pos = (x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)).norm(dim=-1)
-    x_d_pos = x_d_pos * 2 / 150  # scale [0, radius] to [0, 2]
+    x_d_pos = x_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
     x_pos_rpe = x_d_pos.unsqueeze(-1)
     x_ang2ang = _get_rel_pe(x_vets.unsqueeze(1), x_vets.unsqueeze(2))
     x_v_pos = x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)
@@ -130,7 +130,7 @@ def collate_fn(batch):
 
     x_scene_d_pos = (x_ctrs.unsqueeze(2) -
                      scene_ctrs.unsqueeze(1)).norm(dim=-1)
-    x_scene_d_pos = x_scene_d_pos * 2 / 150  # scale [0, radius] to [0, 2]
+    x_scene_d_pos = x_scene_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
     x_scene_pos_rpe = x_scene_d_pos.unsqueeze(-1)
     x_scene_ang2ang = _get_rel_pe(x_vets.unsqueeze(2), scene_vets.unsqueeze(1))
     x_scene_v_pos = x_ctrs.unsqueeze(2) - scene_ctrs.unsqueeze(1)
