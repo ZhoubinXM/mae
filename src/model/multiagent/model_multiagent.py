@@ -80,7 +80,7 @@ class ModelMultiAgent(nn.Module):
         )
 
         # Scene Decoder
-        self.scene_decoder = SceneDecoder(
+        self.scene_decoder = SceneSimplDecoder(
             hidden_dim=embed_dim,
             embedding_type=embedding_type,
             num_head=num_heads,

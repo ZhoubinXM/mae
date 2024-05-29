@@ -9,13 +9,13 @@ save_top_k: 1
 
 data_root: /home/jerome.zhou/data/av2
 checkpoint: 
-output: spa_6_propose_2_refine_2_scene_2_0.00015_3
+output: spa_6_propose_mlp_refine_2_4_0.0003
 
 # trainer
 num_workers: 8
 gpus: [0,1,2,3,4,5,6,7]
 sync_bn: true
-batch_size: 2
+batch_size: 4
 epochs: 60
 warmup_epochs: 10
 post_norm: False
@@ -23,7 +23,7 @@ road_embed_type: transform
 tempo_embed_type: norm
 
 # optimizer
-lr: 0.00015
+lr: 0.0003
 weight_decay: 1e-4
 gradient_clip_val: 
 gradient_clip_algorithm: 

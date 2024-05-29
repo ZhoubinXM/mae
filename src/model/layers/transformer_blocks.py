@@ -285,8 +285,8 @@ class CrossAttenderBlock(nn.Module):
         self.post_norm = post_norm
 
         self.norm1 = norm_layer(dim)
-        self.normk = norm_layer(dim)
-        self.normv = norm_layer(dim)
+        self.normkv = norm_layer(dim)
+        # self.normv = norm_layer(dim)
         self.attn = torch.nn.MultiheadAttention(
             dim,
             num_heads=num_heads,
@@ -311,7 +311,7 @@ class CrossAttenderBlock(nn.Module):
         self.drop_path2 = DropPath(
             drop_path) if drop_path > 0.0 else nn.Identity()
         if use_simpl:
-            self.proj_memory = nn.Sequential(nn.Linear(dim * 3, dim),
+            self.proj_memory = nn.Sequential(nn.Linear(dim * 2, dim),
                                              nn.LayerNorm(dim),
                                              nn.ReLU(inplace=True))
             if update_rpe:
@@ -335,10 +335,10 @@ class CrossAttenderBlock(nn.Module):
             _, N, M, _ = position_bias.shape
             B, M, D = k.shape
             # src_x = k[:, :N].unsqueeze(2).repeat(1, 1, M, 1)
-            src_x = src.unsqueeze(2).repeat(1, 1, M, 1)
+            # src_x = src.unsqueeze(2).repeat(1, 1, M, 1)
             tgt_x = k.unsqueeze(1).repeat(1, N, 1, 1)
             kv = self.proj_memory(
-                torch.cat([position_bias, src_x, tgt_x], dim=-1))  # [B,N,M,D]
+                torch.cat([position_bias, tgt_x], dim=-1))  # [B,N,M,D]
             # update edge
             if self.update_rpe:
                 position_bias = self.norm_edge(
@@ -355,8 +355,8 @@ class CrossAttenderBlock(nn.Module):
             k = kv
             v = kv
         src2 = self.norm1(src)
-        k = self.normk(k)
-        v = self.normv(v)
+        k = self.normkv(k)
+        v = self.normkv(v)
         src2 = self.attn(
             query=src2,
             key=k,

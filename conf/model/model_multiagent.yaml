@@ -9,7 +9,7 @@ target:
   embedding_type: "fourier"
   encoder_depth: 3
   spa_depth: 6
-  decoder_depth: 2
+  decoder_depth: 3
   scene_score_depth: 2
   num_heads: 8
   attn_bias: True

@@ -383,6 +383,64 @@ class SceneSimplDecoder(nn.Module):
             hidden_dim=hidden_dim * 4,
             output_dim=1,
         )
+        self.traj_emb = nn.GRU(
+            input_size=hidden_dim,
+            hidden_size=hidden_dim,
+            num_layers=1,
+            bias=True,
+            batch_first=False,
+            dropout=0.0,
+            bidirectional=False,
+        )
+        self.traj_emb_h0 = nn.Parameter(torch.zeros(1, hidden_dim))
+
+        if embedding_type == "fourier":
+            num_freq_bands = 64
+            self.y_emb = FourierEmbedding(
+                input_dim=2,
+                hidden_dim=hidden_dim,
+                num_freq_bands=num_freq_bands,
+            )
+        else:
+            raise NotImplementedError(f"{embedding_type} is not implement!")
+        self.cross_attender_refine = nn.ModuleList()
+        for i in range(depth):
+            self.cross_attender_refine.append(
+                CrossAttenderBlock(
+                    hidden_dim,
+                    num_heads=8,
+                    attn_drop=dropout,
+                    kdim=hidden_dim,
+                    vdim=hidden_dim,
+                    post_norm=post_norm,
+                    drop=dropout,
+                    act_layer=act_layer,
+                    norm_layer=norm_layer,
+                    attn_bias=attn_bias,
+                    ffn_bias=ffn_bias,
+                    use_simpl=False,
+                    update_rpe=depth - 1 > i,
+                ))
+            self.cross_attender_refine.append(
+                Block(
+                    dim=hidden_dim,
+                    num_heads=num_head,
+                    attn_drop=dropout,
+                    post_norm=post_norm,
+                    drop=dropout,
+                    act_layer=act_layer,
+                    norm_layer=norm_layer,
+                    attn_bias=attn_bias,
+                    ffn_bias=ffn_bias,
+                    use_simpl=False,
+                    update_rpe=depth - 1 > i,
+                ))
+
+        self.traj_decoder_refine = MLPLayer(
+            input_dim=hidden_dim,
+            hidden_dim=hidden_dim * 4,
+            output_dim=future_steps * 2,
+        )
 
         self.apply(weight_init)
 
@@ -405,7 +463,41 @@ class SceneSimplDecoder(nn.Module):
         cls_token = torch.cat(
             [cls_token, one_hot_mask.view(1, K, K).repeat(B, 1, 1)], dim=-1)
 
-        y_hat = self.traj_decoder(x_actors).view(B, K, N, self.future_steps, 2)
+        y_hat = self.traj_decoder(x_actors).view(B, K, N, self.future_steps,
+                                                 2).permute(0, 2, 1, 3, 4)
         pi = self.prob_decoder(cls_token).view(B, K)
 
-        return {"y_hat": y_hat, "pi": pi}
+        traj_query = self.y_emb(y_hat.detach().reshape(
+            B * N * self.num_modes, self.future_steps,
+            2)).reshape(B, N, self.num_modes, self.future_steps, D)
+        B, _, _, T, D = traj_query.shape
+        traj_query = traj_query.reshape(B * N * self.num_modes, T,
+                                        D).transpose(0, 1)
+        traj_query = self.traj_emb(
+            traj_query,
+            self.traj_emb_h0.unsqueeze(1).repeat(1, traj_query.size(1),
+                                                 1))[1].squeeze(0).reshape(
+                                                     B, N * self.num_modes, D)
+        for i in range(0, len(self.cross_attender_refine), 2):
+            traj_query = self.cross_attender_refine[i](
+                traj_query,
+                scene_feat,
+                scene_feat,
+                key_padding_mask=key_padding_mask,
+            )
+
+            traj_query = (traj_query.reshape(B, N, self.num_modes, D).permute(
+                0, 2, 1, 3).reshape(B, self.num_modes * N, D))
+
+            mask = (data["x_key_padding_mask"].unsqueeze(1).repeat(
+                1, self.num_modes, 1, 1).reshape(B, self.num_modes * N))
+
+            traj_query = self.cross_attender_refine[i + 1](
+                traj_query, key_padding_mask=mask)
+            traj_query = (traj_query.reshape(B, self.num_modes, N, D).permute(
+                0, 2, 1, 3).reshape(B, N * self.num_modes, D))
+
+        y_hat_refine = self.traj_decoder_refine(traj_query).reshape(
+            B, N, self.num_modes, self.future_steps, 2)
+        y_hat_refine = y_hat.detach() + y_hat_refine
+        return {"y_hat": y_hat_refine, "pi": pi, "y_propose": y_hat}
