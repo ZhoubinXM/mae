@@ -39,9 +39,14 @@ class SceneEncoder(nn.Module):
             ) for i in range(spa_depth))
 
         # self.scene_norm = norm_layer(hidden_dim)
-        self.pos_embed = MLPLayer(input_dim=5,
-                                  hidden_dim=hidden_dim * 4,
-                                  output_dim=hidden_dim)
+        num_freq_bands: int = 64
+        self.pos_embed = FourierEmbedding(input_dim=5,
+                                              hidden_dim=hidden_dim,
+                                              num_freq_bands=num_freq_bands,
+                                              norm_layer=norm_layer)
+        # self.pos_embed = MLPLayer(input_dim=5,
+        #                           hidden_dim=hidden_dim * 4,
+        #                           output_dim=hidden_dim)
 
         self.apply(weight_init)
 

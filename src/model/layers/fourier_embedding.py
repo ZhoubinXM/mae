@@ -63,7 +63,10 @@ class FourierEmbedding(nn.Module):
             x = torch.cat([x.cos(), x.sin(), continuous_inputs.unsqueeze(-1)], dim=-1)  # [b*n, T, 4, 129]
             continuous_embs: List[Optional[torch.Tensor]] = [None] * self.input_dim
             for i in range(self.input_dim):
-                continuous_embs[i] = self.mlps[i](x[:, :, i])
+                if len(x.shape) == 5:
+                    continuous_embs[i] = self.mlps[i](x[:, :, :, i])
+                else:
+                    continuous_embs[i] = self.mlps[i](x[:, :, i])
             x = torch.stack(continuous_embs).sum(dim=0)
             if categorical_embs is not None:
                 x = x + torch.stack(categorical_embs).sum(dim=0)

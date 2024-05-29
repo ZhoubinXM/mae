@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
 from src.model.layers.fourier_embedding import FourierEmbedding
 from src.model.layers.transformer_blocks import Block, MLPLayer
 
@@ -42,7 +43,7 @@ class LaneEncoder(nn.Module):
         else:
             raise NotImplementedError(f"{embedding_type} is not implement!")
 
-        self.lane_vector_query = nn.Parameter(torch.randn(1, hidden_dim))
+        # self.lane_vector_query = nn.Parameter(torch.randn(1, hidden_dim))
         self.lane_tempo_net = nn.ModuleList(
             Block(
                 dim=hidden_dim,
@@ -95,14 +96,14 @@ class LaneEncoder(nn.Module):
             lane_feat[~lane_padding_mask],
             categorical_embs=[lane_categorical_embeds[~lane_padding_mask]])
 
-        lane_query = self.lane_vector_query[None, :, :].repeat(
-            lane_actor_feat.shape[0], 1, 1)
-        lane_actor_feat = torch.cat([lane_actor_feat, lane_query], dim=1)
-        lane_pt_padding_mask = torch.cat([lane_pt_padding_mask,
-            torch.zeros([B * M, 1]).to(lane_padding_mask.dtype).to(
-                lane_padding_mask.device)
-        ],
-                                      dim=1)
+        # lane_query = self.lane_vector_query[None, :, :].repeat(
+        #     lane_actor_feat.shape[0], 1, 1)
+        # lane_actor_feat = torch.cat([lane_actor_feat, lane_query], dim=1)
+        # lane_pt_padding_mask = torch.cat([lane_pt_padding_mask,
+        #     torch.zeros([B * M, 1]).to(lane_padding_mask.dtype).to(
+        #         lane_padding_mask.device)
+        # ],
+        #                               dim=1)
         
         # lane_pt_positions = torch.arange(L+1).unsqueeze(0).repeat(
         #     lane_actor_feat.shape[0], 1).to(lane_actor_feat.device)
@@ -118,7 +119,7 @@ class LaneEncoder(nn.Module):
                                           lane_actor_feat.shape[-1],
                                           device=lane_actor_feat.device)
 
-        lane_actor_feat_tmp[~lane_padding_mask] = lane_actor_feat[:, -1].clone()
+        lane_actor_feat_tmp[~lane_padding_mask] = self._global_maxpool_aggre(lane_actor_feat).squeeze()
         lane_actor_feat = lane_actor_feat_tmp.reshape(B, M, -1)
 
         # lane_centers = data["lane_positions"][:, :, 0].to(torch.float32)
@@ -141,6 +142,9 @@ class LaneEncoder(nn.Module):
         # lane_actor_feat = lane_actor_feat + lane_pos_embed
 
         return lane_actor_feat
+    
+    def _global_maxpool_aggre(self, feat) -> torch.Tensor:
+        return F.adaptive_max_pool1d(feat.permute(0, 2, 1), 1).permute(0, 2, 1)
 
 
 class MLP(nn.Module):

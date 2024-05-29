@@ -285,8 +285,8 @@ class CrossAttenderBlock(nn.Module):
         self.post_norm = post_norm
 
         self.norm1 = norm_layer(dim)
-        self.normk = norm_layer(dim)
-        self.normv = norm_layer(dim)
+        self.normkv = norm_layer(dim)
+        # self.normv = norm_layer(dim)
         self.attn = torch.nn.MultiheadAttention(
             dim,
             num_heads=num_heads,
@@ -355,8 +355,8 @@ class CrossAttenderBlock(nn.Module):
             k = kv
             v = kv
         src2 = self.norm1(src)
-        k = self.normk(k)
-        v = self.normv(v)
+        k = self.normkv(k)
+        v = self.normkv(v)
         src2 = self.attn(
             query=src2,
             key=k,
