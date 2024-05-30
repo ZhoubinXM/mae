@@ -55,6 +55,14 @@ class AgentEncoder(nn.Module):
                 attn_bias=attn_bias,
                 ffn_bias=ffn_bias,
             ) for _ in range(tempo_depth))
+        self.tempo_norm = nn.ModuleList(
+            nn.LayerNorm(hidden_dim) for _ in range(tempo_depth))
+        self.fc_tempo = nn.ModuleList(
+            nn.Sequential(nn.Linear(hidden_dim * 2, hidden_dim),
+                          nn.LayerNorm(hidden_dim), nn.ReLU(
+                              inplace=True), nn.Linear(hidden_dim, hidden_dim),
+                          nn.LayerNorm(hidden_dim), nn.ReLU(inplace=True))
+            for _ in range(tempo_depth))
 
         # self.agent_pos_embed = MLPLayer(
         #     input_dim=agent_pos_input_dim,
@@ -68,7 +76,8 @@ class AgentEncoder(nn.Module):
     def forward(self, data: dict):
         agent_hist_padding_mask = data["x_padding_mask"][:, :, :50]
         agent_padding_mask = data["x_key_padding_mask"]
-        agent_hist_angles = data['x_angles'][:, :, :50].contiguous() # instance frame
+        agent_hist_angles = data['x_angles'][:, :, :50].contiguous(
+        )  # instance frame
         # agent_hist_angles_vec = torch.stack(
         #     [agent_hist_angles.cos(),
         #      agent_hist_angles.sin()], dim=-1)
@@ -117,18 +126,29 @@ class AgentEncoder(nn.Module):
         #                                     dim=1)
 
         # 2. temo net for agent time self attention
-        for agent_tempo_blk in self.agent_tempo_net:
-            agent_feat = agent_tempo_blk(
+        for idx, agent_tempo_blk in enumerate(self.agent_tempo_net):
+            agent_feat_trans = agent_tempo_blk(
                 agent_feat,
                 key_padding_mask=agent_hist_padding_mask[~agent_padding_mask],
             )
+            # update feat with max pooling
+            agent_max_feat = self._global_maxpool_aggre(agent_feat_trans)
+            agent_max_cat_feat = torch.cat([
+                agent_feat_trans,
+                agent_max_feat.repeat([1, agent_feat.shape[1], 1])
+            ],
+                                           dim=-1)
+
+            agent_feat = self.tempo_norm[idx](agent_feat + self.fc_tempo[idx]
+                                              (agent_max_cat_feat))
 
         # 3. pooling
         agent_feat_tmp = torch.zeros(B * N,
                                      agent_feat.shape[-1],
                                      device=agent_feat.device)
 
-        agent_feat_tmp[~agent_padding_mask] = self._global_maxpool_aggre(agent_feat).squeeze()
+        agent_feat_tmp[~agent_padding_mask] = self._global_maxpool_aggre(
+            agent_feat).squeeze()
         agent_feat = agent_feat_tmp.reshape(B, N, agent_feat.shape[-1])
 
         # x_positions = data["x_positions"][:, :, 49]  # [B, N, 2]
@@ -147,7 +167,6 @@ class AgentEncoder(nn.Module):
         # agent_feat = agent_feat.reshape(B, N, -1)
 
         return agent_feat
-    
+
     def _global_maxpool_aggre(self, feat) -> torch.Tensor:
         return F.adaptive_max_pool1d(feat.permute(0, 2, 1), 1).permute(0, 2, 1)
-

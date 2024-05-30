@@ -9,7 +9,7 @@ save_top_k: 1
 
 data_root: /home/jerome.zhou/data/av2
 checkpoint: 
-output: max_pooling_encoder/normal/spa_6_propose_2_refine_2_scene_2_0.0005_8
+output: max_pooling_encoder/pointnet/spa_6_propose_2_refine_2_scene_2_0.0005_8/use_N*K
 
 # trainer
 num_workers: 8

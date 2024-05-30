@@ -228,10 +228,10 @@ class SceneDecoder(nn.Module):
             )
             # 每个模式下 未来agent的交互
             traj_query = (traj_query.reshape(B, N, self.num_modes, D).permute(
-                0, 2, 1, 3).reshape(B * self.num_modes, N, D))
+                0, 2, 1, 3).reshape(B, self.num_modes* N, D))
 
             mask = (data["x_key_padding_mask"].unsqueeze(1).repeat(
-                1, self.num_modes, 1, 1).reshape(B * self.num_modes, N))
+                1, self.num_modes, 1, 1).reshape(B, self.num_modes* N))
 
             traj_query = self.cross_attender_propose[i + 1](
                 traj_query, key_padding_mask=mask, 
@@ -281,10 +281,10 @@ class SceneDecoder(nn.Module):
 
                 traj_query = (traj_query.reshape(
                     B, N, self.num_modes,
-                    D).permute(0, 2, 1, 3).reshape(B * self.num_modes, N, D))
+                    D).permute(0, 2, 1, 3).reshape(B, self.num_modes* N, D))
 
                 mask = (data["x_key_padding_mask"].unsqueeze(1).repeat(
-                    1, self.num_modes, 1, 1).reshape(B * self.num_modes, N))
+                    1, self.num_modes, 1, 1).reshape(B, self.num_modes* N))
 
                 traj_query = self.cross_attender_refine[i + 1](
                     traj_query, key_padding_mask=mask, 

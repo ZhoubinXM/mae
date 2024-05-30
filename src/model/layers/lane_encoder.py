@@ -55,6 +55,14 @@ class LaneEncoder(nn.Module):
                 attn_bias=attn_bias,
                 ffn_bias=ffn_bias,
             ) for _ in range(tempo_depth))
+        self.lane_tempo_norm = nn.ModuleList(
+            nn.LayerNorm(hidden_dim) for _ in range(tempo_depth))
+        self.lane_fc_tempo = nn.ModuleList(
+            nn.Sequential(nn.Linear(hidden_dim * 2, hidden_dim),
+                          nn.LayerNorm(hidden_dim), nn.ReLU(
+                              inplace=True), nn.Linear(hidden_dim, hidden_dim),
+                          nn.LayerNorm(hidden_dim), nn.ReLU(inplace=True))
+            for _ in range(tempo_depth))
         
         # self.lane_pos_embed = MLPLayer(input_dim=lane_pos_input_dim,
         #                                 hidden_dim=hidden_dim,
@@ -110,10 +118,20 @@ class LaneEncoder(nn.Module):
         # lane_pos_embed = self.lane_position_emb(lane_pt_positions)
         # lane_actor_feat = lane_actor_feat + lane_pos_embed
 
-        for lane_blk in self.lane_tempo_net:
-            lane_actor_feat = lane_blk(
+        for idx, lane_blk in enumerate(self.lane_tempo_net):
+            lane_actor_feat_trans = lane_blk(
                 lane_actor_feat,
                 key_padding_mask=lane_pt_padding_mask[~lane_padding_mask])
+            # update feat with max pooling
+            lane_max_feat = self._global_maxpool_aggre(lane_actor_feat_trans)
+            lane_max_cat_feat = torch.cat([
+                lane_actor_feat_trans,
+                lane_max_feat.repeat([1, lane_actor_feat.shape[1], 1])
+            ],
+                                           dim=-1)
+
+            lane_actor_feat = self.lane_tempo_norm[idx](lane_actor_feat + self.lane_fc_tempo[idx]
+                                              (lane_max_cat_feat))
 
         lane_actor_feat_tmp = torch.zeros(B * M,
                                           lane_actor_feat.shape[-1],
