@@ -118,26 +118,26 @@ def collate_fn(batch):
 
     data["rpe"] = torch.cat([ang2ang, ang2vec, pos_rpe], dim=-1)
 
-    x_ctrs = data["x_centers"]
-    x_d_pos = (x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)).norm(dim=-1)
-    x_d_pos = x_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
-    x_pos_rpe = x_d_pos.unsqueeze(-1)
-    x_ang2ang = _get_rel_pe(x_vets.unsqueeze(1), x_vets.unsqueeze(2))
-    x_v_pos = x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)
-    x_ang2vec = _get_rel_pe(x_vets.unsqueeze(1), x_v_pos)
+    # x_ctrs = data["x_centers"]
+    # x_d_pos = (x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)).norm(dim=-1)
+    # x_d_pos = x_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
+    # x_pos_rpe = x_d_pos.unsqueeze(-1)
+    # x_ang2ang = _get_rel_pe(x_vets.unsqueeze(1), x_vets.unsqueeze(2))
+    # x_v_pos = x_ctrs.unsqueeze(1) - x_ctrs.unsqueeze(2)
+    # x_ang2vec = _get_rel_pe(x_vets.unsqueeze(1), x_v_pos)
 
-    data["x_rpe"] = torch.cat([x_ang2ang, x_ang2vec, x_pos_rpe], dim=-1)
+    # data["x_rpe"] = torch.cat([x_ang2ang, x_ang2vec, x_pos_rpe], dim=-1)
 
-    x_scene_d_pos = (x_ctrs.unsqueeze(2) -
-                     scene_ctrs.unsqueeze(1)).norm(dim=-1)
-    x_scene_d_pos = x_scene_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
-    x_scene_pos_rpe = x_scene_d_pos.unsqueeze(-1)
-    x_scene_ang2ang = _get_rel_pe(x_vets.unsqueeze(2), scene_vets.unsqueeze(1))
-    x_scene_v_pos = x_ctrs.unsqueeze(2) - scene_ctrs.unsqueeze(1)
-    x_scene_ang2vec = _get_rel_pe(x_vets.unsqueeze(2), x_scene_v_pos)
+    # x_scene_d_pos = (x_ctrs.unsqueeze(2) -
+    #                  scene_ctrs.unsqueeze(1)).norm(dim=-1)
+    # x_scene_d_pos = x_scene_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
+    # x_scene_pos_rpe = x_scene_d_pos.unsqueeze(-1)
+    # x_scene_ang2ang = _get_rel_pe(x_vets.unsqueeze(2), scene_vets.unsqueeze(1))
+    # x_scene_v_pos = x_ctrs.unsqueeze(2) - scene_ctrs.unsqueeze(1)
+    # x_scene_ang2vec = _get_rel_pe(x_vets.unsqueeze(2), x_scene_v_pos)
 
-    data["x_scene_rpe"] = torch.cat(
-        [x_scene_ang2ang, x_scene_ang2vec, x_scene_pos_rpe], dim=-1)
+    # data["x_scene_rpe"] = torch.cat(
+    #     [x_scene_ang2ang, x_scene_ang2vec, x_scene_pos_rpe], dim=-1)
 
     return data
 
