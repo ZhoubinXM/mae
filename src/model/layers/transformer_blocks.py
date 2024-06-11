@@ -146,9 +146,10 @@ class Block(nn.Module):
             drop_path) if drop_path > 0.0 else nn.Identity()
         if use_simpl:
             self.normq = norm_layer(dim)
-            self.proj_memory = nn.Sequential(nn.Linear(dim * 3, dim),
-                                             nn.LayerNorm(dim),
-                                             nn.ReLU(inplace=True))
+            self.proj_memory = MLPLayer(dim*3, dim*4, dim)
+            # nn.Sequential(nn.Linear(dim * 3, dim),
+            #                                  nn.LayerNorm(dim),
+            #                                  nn.ReLU(inplace=True))
             if update_rpe:
                 self.proj_edge = nn.Sequential(nn.Linear(dim, dim),
                                                nn.LayerNorm(dim),
@@ -156,6 +157,10 @@ class Block(nn.Module):
                 self.norm_edge = nn.LayerNorm(dim)
             self.update_rpe = update_rpe
         self.dropout2 = nn.Dropout(drop)
+
+        # use gate network
+        # self.to_g = nn.Linear(dim* 2, dim)
+        # self.to_s = nn.Linear(dim, dim)
 
     def forward_pre(
         self,
@@ -184,9 +189,11 @@ class Block(nn.Module):
             kv = kv.reshape(B * N, N, D)
             position_bias = position_bias.reshape(B * N, N, D)
             key_padding_mask = key_padding_mask.reshape(B * N, N)
+            # inputs = src.clone()
             kv = self.norm1(kv)
             src2 = self.normq(src)
         else:
+            # inputs = src.clone()
             src2 = self.norm1(src)
         if position_bias is None:
             src2 = self.attn(
@@ -207,6 +214,11 @@ class Block(nn.Module):
             )[0]
         src = src + self.drop_path1(self.dropout2(src2))
         src = src + self.drop_path2(self.mlp(self.norm2(src)))
+
+        # # use gate network
+        # g = torch.sigmoid(self.to_g(torch.cat([inputs, src], dim=-1)))
+        # src = inputs + g * (self.to_s(src) - inputs)
+        
         if position_bias is not None:
             return src.squeeze(1).reshape(B, N, D), position_bias.reshape(
                 B, N, N, D)
@@ -285,8 +297,8 @@ class CrossAttenderBlock(nn.Module):
         self.post_norm = post_norm
 
         self.norm1 = norm_layer(dim)
-        self.normk = norm_layer(dim)
-        self.normv = norm_layer(dim)
+        self.normkv = norm_layer(dim)
+        # self.normv = norm_layer(dim)
         self.attn = torch.nn.MultiheadAttention(
             dim,
             num_heads=num_heads,
@@ -311,9 +323,10 @@ class CrossAttenderBlock(nn.Module):
         self.drop_path2 = DropPath(
             drop_path) if drop_path > 0.0 else nn.Identity()
         if use_simpl:
-            self.proj_memory = nn.Sequential(nn.Linear(dim * 3, dim),
-                                             nn.LayerNorm(dim),
-                                             nn.ReLU(inplace=True))
+            self.proj_memory = MLPLayer(dim*3, dim*4, dim)
+            # nn.Sequential(nn.Linear(dim * 3, dim),
+            #                                  nn.LayerNorm(dim),
+            #                                  nn.ReLU(inplace=True))
             if update_rpe:
                 self.proj_edge = nn.Sequential(nn.Linear(dim, dim),
                                                nn.LayerNorm(dim),
@@ -321,8 +334,11 @@ class CrossAttenderBlock(nn.Module):
                 self.norm_edge = nn.LayerNorm(dim)
             self.update_rpe = update_rpe
         self.dropout2 = nn.Dropout(drop)
+        # # use gate network
+        # self.to_g = nn.Linear(dim* 2, dim)
+        # self.to_s = nn.Linear(dim, dim)
 
-    def forward_pre(
+    def forward_pre(     
         self,
         src: torch.Tensor,
         k: torch.Tensor,
@@ -346,26 +362,34 @@ class CrossAttenderBlock(nn.Module):
                 position_bias = position_bias.reshape(B * N, M, D)
             # kv = kv.unsqueeze(2).repeat(1, 1, 6, 1, 1)  # [B,N,6,M,D]
             # src_mask = key_padding_mask[:, :N].unsqueeze(2).repeat(1, 1, M)
-            key_padding_mask = key_padding_mask.unsqueeze(1).repeat(1, N, 1)
+            # key_padding_mask = key_padding_mask.unsqueeze(1).repeat(1, N, 1)
             # key_padding_mask = (tgt_mask).unsqueeze(2).repeat(
             #     1, 1, 6, 1)
             src = src.unsqueeze(2).reshape(B * N, 1, D)
             kv = kv.reshape(B * N, M, D)
             key_padding_mask = key_padding_mask.reshape(B * N, M)
-            k = kv
-            v = kv
+            # k = kv
+            # v = kv
+        else:
+            kv = k
+        # inputs = src.clone()
         src2 = self.norm1(src)
-        k = self.normk(k)
-        v = self.normv(v)
+        kv = self.normkv(kv)
+        # v = self.normkv(v)
         src2 = self.attn(
             query=src2,
-            key=k,
-            value=v,
+            key=kv,
+            value=kv,
             attn_mask=mask,
             key_padding_mask=key_padding_mask,
         )[0]
         src = src + self.drop_path1(self.dropout2(src2))
         src = src + self.drop_path2(self.mlp(self.norm2(src)))
+        
+        # use gate network
+        # g = torch.sigmoid(self.to_g(torch.cat([inputs, src], dim=-1)))
+        # src = inputs + g * (self.to_s(src) - inputs)
+
         if position_bias is not None:
             return src.squeeze(1).reshape(B, N, D), position_bias.reshape(
                 B, N, M, D)

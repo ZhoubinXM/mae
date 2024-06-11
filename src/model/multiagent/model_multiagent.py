@@ -92,7 +92,7 @@ class ModelMultiAgent(nn.Module):
             ffn_bias=ffn_bias,
             num_modes=num_modes,
             future_steps=future_steps,
-            num_recurrent_steps=1,
+            num_recurrent_steps=3,
             depth=decoder_depth,
             scene_score_depth=scene_score_depth,
         )

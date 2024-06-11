@@ -9,13 +9,12 @@ save_top_k: 1
 
 data_root: /home/jerome.zhou/data/av2
 checkpoint: 
-output: spa_6_propose_2_refine_2_scene_2_0.00015_3
-
+output: qcnet_simpl/spa_6_propose_1_refine_1_scene_1_0.0002_4/use_N_change_mask_block_no_src
 # trainer
-num_workers: 8
-gpus: [0,1,2,3,4,5,6,7]
+num_workers: 128
+gpus: [0,1,2,3]
 sync_bn: true
-batch_size: 2
+batch_size: 4
 epochs: 60
 warmup_epochs: 10
 post_norm: False
