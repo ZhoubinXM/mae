@@ -51,7 +51,7 @@ def preprocess(args):
                 extractor = Av2ExtractorMultiAgent(save_path=save_dir,
                                                    mode=mode)
             else:
-                save_dir = data_root / "multiagent-baseline-norm-200" / mode
+                save_dir = data_root / "multiagent-baseline-norm-200-all-time-lane" / mode
                 extractor = Av2ExtractorMultiAgentNorm(save_path=save_dir,
                                                        mode=mode)
         else:

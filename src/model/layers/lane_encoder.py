@@ -4,7 +4,7 @@ from src.model.layers.fourier_embedding import FourierEmbedding
 from src.model.layers.transformer_blocks import Block, MLPLayer
 
 from src.utils.weight_init import weight_init
-
+from src.utils.utils import angle_between_2d_vectors
 
 class LaneEncoder(nn.Module):
 
@@ -39,11 +39,30 @@ class LaneEncoder(nn.Module):
                                               hidden_dim=hidden_dim,
                                               num_freq_bands=num_freq_bands,
                                               norm_layer=norm_layer)
+            self.lane_rpe_projection = FourierEmbedding(input_dim=5,
+                                              hidden_dim=hidden_dim,
+                                              num_freq_bands=num_freq_bands,
+                                              norm_layer=norm_layer)
         else:
             raise NotImplementedError(f"{embedding_type} is not implement!")
 
         self.lane_vector_query = nn.Parameter(torch.randn(1, hidden_dim))
         self.lane_tempo_net = nn.ModuleList(
+            Block(
+                dim=hidden_dim,
+                num_heads=num_head,
+                attn_drop=dropout,
+                post_norm=post_norm,
+                drop=dropout,
+                act_layer=act_layer,
+                norm_layer=norm_layer,
+                attn_bias=attn_bias,
+                ffn_bias=ffn_bias,
+                use_simpl=True,
+                update_rpe=tempo_depth - 1 > i,
+            ) for i in range(tempo_depth))
+        
+        self.lane_pool_net = nn.ModuleList(
             Block(
                 dim=hidden_dim,
                 num_heads=num_head,
@@ -53,7 +72,7 @@ class LaneEncoder(nn.Module):
                 post_norm=post_norm,
                 attn_bias=attn_bias,
                 ffn_bias=ffn_bias,
-            ) for _ in range(tempo_depth))
+            ) for _ in range(1))
         
         # self.lane_pos_embed = MLPLayer(input_dim=lane_pos_input_dim,
         #                                 hidden_dim=hidden_dim,
@@ -67,16 +86,19 @@ class LaneEncoder(nn.Module):
         B, M, L = lane_pt_padding_mask.shape
         lane_vector = data["lane_positions"][:,:,1:] - data["lane_positions"][:,:,:-1]
         lane_vector = torch.cat([torch.zeros(B,M,1,2).to(lane_vector.device), lane_vector], dim=2)
-        # lane_angles = torch.arctan2(lane_vector[..., 1], lane_vector[..., 0])
-        # lane_angles_vector = torch.stack([lane_angles.cos(), lane_angles.sin()], dim=-1)
+        lane_angles = torch.arctan2(lane_vector[..., 1], lane_vector[..., 0])
+        lane_angles_vector = torch.stack([lane_angles.cos(), lane_angles.sin()], dim=-1)
 
-        lane_feat = torch.cat(
-            [
-                lane_vector,
-                # lane_angles.unsqueeze(-1),
-            ],
-            dim=-1,
-        )  # [B, M, L, 2]
+        # lane_feat = torch.cat(
+        #     [
+        #         lane_vector,
+        #         # lane_angles.unsqueeze(-1),
+        #     ],
+        #     dim=-1,
+        # )  # [B, M, L, 2]
+        lane_feat = torch.stack(
+                [torch.norm(lane_vector, p=2, dim=-1),
+                 angle_between_2d_vectors(ctr_vector=lane_angles_vector, nbr_vector=lane_vector)], dim=-1)
 
         B, M, L, LF = lane_feat.shape
         lane_feat = lane_feat.view(-1, L, LF)
@@ -94,7 +116,23 @@ class LaneEncoder(nn.Module):
         lane_actor_feat: torch.Tensor = self.lane_projection(
             lane_feat[~lane_padding_mask],
             categorical_embs=[lane_categorical_embeds[~lane_padding_mask]])
-
+        rel_pos = data["lane_l_rpe"].reshape(B * M, L, L, 5)[~lane_padding_mask]
+        rel_pos = self.lane_rpe_projection(
+            rel_pos.reshape(rel_pos.shape[0] * rel_pos.shape[1], L,
+                            5)).reshape((~lane_padding_mask).sum(), L, L,
+                                        -1)  # [B*N, T, T, 128]
+        for lane_blk in self.lane_tempo_net:
+            lane_actor_feat, rel_pos = lane_blk(
+                lane_actor_feat,
+                key_padding_mask=lane_pt_padding_mask[~lane_padding_mask],
+                position_bias=rel_pos)
+        
+        # lane_pt_positions = torch.arange(L+1).unsqueeze(0).repeat(
+        #     lane_actor_feat.shape[0], 1).to(lane_actor_feat.device)
+        # lane_pos_embed = self.lane_position_emb(lane_pt_positions)
+        # lane_actor_feat = lane_actor_feat + lane_pos_embed
+        
+        # pooling
         lane_query = self.lane_vector_query[None, :, :].repeat(
             lane_actor_feat.shape[0], 1, 1)
         lane_actor_feat = torch.cat([lane_actor_feat, lane_query], dim=1)
@@ -103,13 +141,8 @@ class LaneEncoder(nn.Module):
                 lane_padding_mask.device)
         ],
                                       dim=1)
-        
-        # lane_pt_positions = torch.arange(L+1).unsqueeze(0).repeat(
-        #     lane_actor_feat.shape[0], 1).to(lane_actor_feat.device)
-        # lane_pos_embed = self.lane_position_emb(lane_pt_positions)
-        # lane_actor_feat = lane_actor_feat + lane_pos_embed
 
-        for lane_blk in self.lane_tempo_net:
+        for lane_blk in self.lane_pool_net:
             lane_actor_feat = lane_blk(
                 lane_actor_feat,
                 key_padding_mask=lane_pt_padding_mask[~lane_padding_mask])
@@ -120,25 +153,6 @@ class LaneEncoder(nn.Module):
 
         lane_actor_feat_tmp[~lane_padding_mask] = lane_actor_feat[:, -1].clone()
         lane_actor_feat = lane_actor_feat_tmp.reshape(B, M, -1)
-
-        # lane_centers = data["lane_positions"][:, :, 0].to(torch.float32)
-        # lane_angles = torch.atan2(
-        #     data["lane_positions"][..., 1, 1] -
-        #     data["lane_positions"][..., 0, 1],
-        #     data["lane_positions"][..., 1, 0] -
-        #     data["lane_positions"][..., 0, 0],
-        # )
-        # lane_angles = torch.stack(
-        #     [torch.cos(lane_angles),
-        #      torch.sin(lane_angles)], dim=-1)
-        # lane_pos_feat = torch.cat([lane_centers, lane_angles], dim=-1)
-        # lane_pos_embed = self.lane_pos_embed(lane_pos_feat)
-        # lane_pos_embed_tmp = torch.zeros(B * M,
-        #                               lane_actor_feat.shape[-1],
-        #                               device=lane_actor_feat.device)
-        # lane_pos_embed_tmp[~lane_padding_mask] = lane_pos_embed
-        # lane_pos_embed = lane_pos_embed_tmp.reshape(B, M, -1)
-        # lane_actor_feat = lane_actor_feat + lane_pos_embed
 
         return lane_actor_feat
 

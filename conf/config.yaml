@@ -9,10 +9,10 @@ save_top_k: 1
 
 data_root: /home/jerome.zhou/data/av2
 checkpoint: 
-output: qcnet_simpl/spa_6_propose_1_refine_1_scene_1_0.0002_4/use_N_change_mask_block_no_src
+output: qcnet_simpl/encoder_2_spa_6_propose_1_refine_1_scene_1_0.0002_4/qcnet_encoder
 # trainer
 num_workers: 128
-gpus: [0,1,2,3]
+gpus: [0,1,2,3,4,5,6,7]
 sync_bn: true
 batch_size: 4
 epochs: 60
@@ -22,7 +22,7 @@ road_embed_type: transform
 tempo_embed_type: norm
 
 # optimizer
-lr: 0.00015
+lr: 0.0002
 weight_decay: 1e-4
 gradient_clip_val: 
 gradient_clip_algorithm: 

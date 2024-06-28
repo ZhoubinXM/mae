@@ -1,6 +1,7 @@
 import traceback
 from pathlib import Path
 from typing import List
+from torch.nn.utils.rnn import pad_sequence
 
 import av2.geometry.interpolate as interp_utils
 import numpy as np
@@ -159,9 +160,51 @@ class Av2ExtractorMultiAgentNorm:
             padding_mask = padding_mask[valid_actor_mask]
             num_nodes = x.shape[0]
 
+        lane_positions_all = []
+        is_intersections_all = []
+        lane_ctrs_all = []
+        lane_angles_all = []
+        lane_attr_all = []
+        lane_padding_mask_all = []
+
+        # get each time stamp lane feat.
+        for t in range(50):
+            origin_t = torch.tensor(
+                [local_df[t]["position_x"], local_df[t]["position_y"]],
+                dtype=torch.float)
+            # heading is local coord relative to global coord
+            theta_t = torch.tensor([local_df[t]["heading"]], dtype=torch.float)
+            # rot matrix is local to global
+            rotate_mat_t = torch.tensor([
+                [torch.cos(theta_t), -torch.sin(theta_t)],
+                [torch.sin(theta_t), torch.cos(theta_t)],
+            ], )
+            # 获得AV周围的车道特征
+            (
+                lane_positions_t,
+                is_intersections_t,
+                lane_ctrs_t,
+                lane_angles_t,
+                lane_attr_t,
+                lane_padding_mask_t,
+            ) = self.get_lane_features(am, origin_t, origin_t, rotate_mat_t, self.radius)
+            lane_positions_all.append(lane_positions_t)
+            is_intersections_all.append(is_intersections_t)
+            lane_ctrs_all.append(lane_attr_t)
+            lane_angles_all.append(lane_angles_t)
+            lane_attr_all.append(lane_attr_t)
+            lane_padding_mask_all.append(lane_padding_mask_t)
+        # padding seqence
+        lane_positions_all = pad_sequence(lane_positions_all, batch_first=True)
+        is_intersections_all = pad_sequence(is_intersections_all, batch_first=True)
+        lane_ctrs_all = pad_sequence(lane_ctrs_all, batch_first=True)
+        lane_angles_all = pad_sequence(lane_angles_all, batch_first=True)
+        lane_attr_all = pad_sequence(lane_attr_all, batch_first=True)
+        lane_padding_mask_all = pad_sequence(lane_padding_mask_all, batch_first=True)
         # norm each agent
         x_ctrs = x[:, 49, :2].clone()
         x_theta = x_heading[:, 49].clone()
+        x_heading_original = x_heading.clone()
         x_positions = x[:, :, :2].clone()
         for agent_i in range(x.shape[0]):
             orig = x[agent_i, 49, :2]
@@ -186,6 +229,22 @@ class Av2ExtractorMultiAgentNorm:
                                 [np.sin(theta_i), np.cos(theta_i)]])
             lane_positions[lane_j] = torch.matmul(
                 lane_positions[lane_j] - orig, rot)
+            
+        # norm each lane segment
+        lane_ctrs_all = lane_positions_all[:, :, 0, :2].clone()
+        lane_positions_all_orignal = lane_positions_all.clone()
+        lane_thetas_all = torch.zeros([lane_ctrs_all.shape[0], lane_ctrs_all.shape[1]])
+        for t in range(lane_positions_all.shape[0]):
+            for lane_j in range(lane_positions_all.shape[1]):
+                orig = lane_positions_all[t, lane_j, 0, :2]
+                theta_i = torch.arctan2(
+                    lane_positions_all[t, lane_j, -1, 1] - lane_positions_all[t, lane_j, 0, 1],
+                    lane_positions_all[t, lane_j, -1, 0] - lane_positions_all[t, lane_j, 0, 0])
+                lane_thetas_all[t, lane_j] = (theta_i + np.pi) % (2 * np.pi) - np.pi
+                rot = torch.tensor([[np.cos(theta_i), -np.sin(theta_i)],
+                                    [np.sin(theta_i), np.cos(theta_i)]])
+                lane_positions_all[t, lane_j] = torch.matmul(
+                    lane_positions_all[t, lane_j] - orig, rot)
 
         x_velocity_diff = x_velocity[:, :50].clone()
 
@@ -222,6 +281,7 @@ class Av2ExtractorMultiAgentNorm:
             "x_centers": x_ctrs,  # means distance with AV scene frame
             "x_angles":
             x_heading,  # means heading diff with AV # instance frame
+            "x_heading_original": x_heading_original,
             "x_theta": x_theta,  # scene frame
             "x_velocity":
             x_velocity,  # means absolutely diff with  AV  # scene frame
@@ -236,6 +296,13 @@ class Av2ExtractorMultiAgentNorm:
             "lane_attr": lane_attr,
             "lane_padding_mask": lane_padding_mask,
             "is_intersections": is_intersections,
+            "lane_positions_all": lane_positions_all,  # instance frame
+            "lane_positions_all_orignal": lane_positions_all_orignal,  # scene frame
+            "lane_centers_all": lane_ctrs_all,  # scene frame
+            "lane_angles_all": lane_thetas_all,  # scene frame
+            "lane_attr_all": lane_attr_all,
+            "lane_padding_mask_all": lane_padding_mask_all,
+            "is_intersections_all": is_intersections_all,
             "av_index": torch.tensor(av_idx),
             "origin": origin.view(-1, 2),
             "theta": theta,

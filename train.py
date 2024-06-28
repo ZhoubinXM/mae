@@ -71,6 +71,7 @@ def main(conf):
         # strategy="ddp",
         # if conf.gpus > 1 else None,
         # accumulate_grad_batches=8,
+        precision=16,
         callbacks=callbacks,
         limit_train_batches=conf.limit_train_batches,
         limit_val_batches=conf.limit_val_batches,

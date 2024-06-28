@@ -7,7 +7,7 @@ target:
   historical_steps: 50
   future_steps: 60
   embedding_type: "fourier"
-  encoder_depth: 3
+  encoder_depth: 2
   spa_depth: 6
   decoder_depth: 1
   scene_score_depth: 1

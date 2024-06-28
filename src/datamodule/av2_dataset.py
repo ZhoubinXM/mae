@@ -139,6 +139,40 @@ def collate_fn(batch):
     data["x_scene_rpe"] = torch.cat(
         [x_scene_ang2ang, x_scene_ang2vec, x_scene_pos_rpe], dim=-1)
 
+    x_t_vets = torch.stack(
+        [data["x_angles"][..., :50].cos(), data["x_angles"][..., :50].sin()],
+        dim=-1)
+    x_t_ctrs = data["x"]  # [B, N, T, D]
+    x_t_d_pos = (x_t_ctrs.unsqueeze(2) - x_t_ctrs.unsqueeze(3)).norm(
+        dim=-1)  # [B, N, T, T]
+    x_t_d_pos = x_t_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
+    x_t_pos_rpe = x_t_d_pos.unsqueeze(-1)  # [B, N, T, T, 1]
+    x_t_ang2ang = _get_rel_pe(x_t_vets.unsqueeze(2), x_t_vets.unsqueeze(3))
+    x_t_v_pos = x_t_ctrs.unsqueeze(2) - x_t_ctrs.unsqueeze(3)
+    x_t_ang2vec = _get_rel_pe(x_t_vets.unsqueeze(2), x_t_v_pos)
+
+    data["x_t_rpe"] = torch.cat([x_t_ang2ang, x_t_ang2vec, x_t_pos_rpe],
+                                dim=-1)
+
+    lane_vector = data["lane_positions"][:, :, 1:] - data[
+        "lane_positions"][:, :, :-1]
+    lane_l_ctrs = torch.cat([
+        torch.zeros(lane_vector.shape[0], lane_vector.shape[1], 1, 2).to(
+            lane_vector.device), lane_vector
+    ],
+                            dim=2) # [B, M, L, D]
+    lane_angles = torch.arctan2(lane_l_ctrs[..., 1], lane_l_ctrs[..., 0])
+    lane_l_vets = torch.stack([lane_angles.cos(), lane_angles.sin()], dim=-1)
+    lane_l_d_pos = (lane_l_ctrs.unsqueeze(2) - lane_l_ctrs.unsqueeze(3)).norm(
+        dim=-1)  # [B, M, L, L]
+    lane_l_d_pos = lane_l_d_pos * 2 / 200  # scale [0, radius] to [0, 2]
+    lane_l_pos_rpe = lane_l_d_pos.unsqueeze(-1)  # [B, N, T, T, 1]
+    lane_l_ang2ang = _get_rel_pe(lane_l_vets.unsqueeze(2), lane_l_vets.unsqueeze(3))
+    lane_l_v_pos = lane_l_ctrs.unsqueeze(2) - lane_l_ctrs.unsqueeze(3)
+    lane_l_ang2vec = _get_rel_pe(lane_l_vets.unsqueeze(2), lane_l_v_pos)
+
+    data["lane_l_rpe"] = torch.cat([lane_l_ang2ang, lane_l_ang2vec, lane_l_pos_rpe],
+                                dim=-1)
     return data
 
 

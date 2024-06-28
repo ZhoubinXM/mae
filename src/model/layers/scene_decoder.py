@@ -166,7 +166,7 @@ class SceneDecoder(nn.Module):
         self.to_loc_propose_pos = MLPLayer(
             input_dim=hidden_dim,
             hidden_dim=hidden_dim * 4,
-            output_dim=future_steps * 2,
+            output_dim=future_steps * 2 // self.num_recurrent_steps,
         )
 
         self.scene_query = nn.Parameter(torch.randn(self.num_modes,
@@ -202,15 +202,20 @@ class SceneDecoder(nn.Module):
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
         agent_padding_mask = data["x_key_padding_mask"].reshape(B * N)
         traj_query: torch.Tensor = (
-            self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(B, N, 1, 1)
-            + scene_feat[:, :N].unsqueeze(2)).reshape(B, N * self.num_modes, D)
+            self.agent_traj_query.unsqueeze(0).unsqueeze(0).repeat(
+                B, N, 1, 1) + scene_feat[:, :N].unsqueeze(2)).permute(
+                    0, 2, 1, 3).reshape(B * self.num_modes, N, D)
 
-        # locs_propose_pos: List[Optional[
-        #     torch.Tensor]] = [None] * self.num_recurrent_steps
+        # [B * self.num_mode, N, D]
+        scene_feat = scene_feat.unsqueeze(1).repeat(
+            1, self.num_modes, 1, 1).reshape(B * self.num_modes, -1, D)
+
+        locs_propose_pos: List[Optional[
+            torch.Tensor]] = [None] * self.num_recurrent_steps
         # mode2scene
         x_scene_rel_pos = self.x_scene_pos_embed(
-            data["x_scene_rpe"]).unsqueeze(2).repeat(
-                1, 1, self.num_modes, 1, 1).reshape(B, N * self.num_modes, -1,
+            data["x_scene_rpe"]).unsqueeze(1).repeat(
+                1, self.num_modes, 1, 1, 1).reshape(B * self.num_modes, N, -1,
                                                     D)
         x_rel_pos = self.x_pos_embed(data["x_rpe"])  # [B,N,N,D]
         x_rel_pos = (x_rel_pos[:, None, :, :, :].repeat(
@@ -218,46 +223,51 @@ class SceneDecoder(nn.Module):
 
         x_scene_padding_mask = (
             data["x_key_padding_mask"].unsqueeze(2)
-            & scene_padding_mask.unsqueeze(1)).unsqueeze(2).repeat(
-                1, 1, self.num_modes, 1, 1).reshape(B, N * self.num_modes, -1)
-        # for t in range(self.num_recurrent_steps):
-        for i in range(0, len(self.cross_attender_propose), 2):
-            # Mode&Agent2Scene
-            traj_query, x_scene_rel_pos = self.cross_attender_propose[i](
-                traj_query,
-                scene_feat,
-                scene_feat,
-                key_padding_mask=x_scene_padding_mask,
-                position_bias=x_scene_rel_pos,
-            )
-            traj_query = (traj_query.reshape(B, N, self.num_modes, D).permute(
-                0, 2, 1, 3).reshape(B * self.num_modes, N, D))
+            & scene_padding_mask.unsqueeze(1)).unsqueeze(1).repeat(
+                1, self.num_modes, 1, 1, 1).reshape(B * self.num_modes, N, -1)
+        for t in range(self.num_recurrent_steps):
+            for i in range(0, len(self.cross_attender_propose), 2):
+                # Mode2Scene & Agent2Agent in fut.
+                # we suppose each mode doesn't share scene feature.
+                traj_query, x_scene_rel_pos = self.cross_attender_propose[i](
+                    traj_query,
+                    scene_feat,
+                    scene_feat,
+                    key_padding_mask=x_scene_padding_mask,
+                    position_bias=x_scene_rel_pos,
+                )
+                # traj_query = (traj_query.reshape(B, N, self.num_modes, D).permute(
+                #     0, 2, 1, 3).reshape(B * self.num_modes, N, D))
 
-            mask = (data["x_key_padding_mask"].unsqueeze(1).repeat(
-                1, self.num_modes, 1, 1).reshape(B * self.num_modes, N))
+                mask = (data["x_key_padding_mask"].unsqueeze(1).repeat(
+                    1, self.num_modes, 1, 1).reshape(B * self.num_modes, N))
 
-            traj_query, x_rel_pos = self.cross_attender_propose[i + 1](
-                traj_query, key_padding_mask=mask, position_bias=x_rel_pos)
-            traj_query = (traj_query.reshape(B, self.num_modes, N, D).permute(
-                0, 2, 1, 3).reshape(B, N * self.num_modes, D))
-        # mode2mode
-        traj_query = traj_query.reshape(B * N, self.num_modes, D)
-        traj_query = traj_query[~agent_padding_mask]
-        traj_query = self.mode2mode_propose(traj_query)
-        traj_query_tmp = torch.zeros(B * N,
-                                     self.num_modes,
-                                     D,
-                                     device=traj_query.device)
-        traj_query_tmp[~agent_padding_mask] = traj_query.clone()
-        traj_query = traj_query_tmp.reshape(B, N, self.num_modes, -1)
+                traj_query, x_rel_pos = self.cross_attender_propose[i + 1](
+                    traj_query, key_padding_mask=mask, position_bias=x_rel_pos)
+            traj_query = (traj_query.reshape(B, self.num_modes, N,
+                                             D).permute(0, 2, 1, 3))
+            # mode2mode
+            traj_query = traj_query.reshape(B * N, self.num_modes, D)
+            traj_query = traj_query[~agent_padding_mask]
+            traj_query = self.mode2mode_propose(traj_query)
+            traj_query_tmp = torch.zeros(B * N,
+                                         self.num_modes,
+                                         D,
+                                         device=traj_query.device)
+            traj_query_tmp[~agent_padding_mask] = traj_query.clone()
+            traj_query = traj_query_tmp.reshape(B, N, self.num_modes, -1)
 
-        # propose and refine predict trajectory
-        loc_propose_pos = self.to_loc_propose_pos(traj_query)
+            # propose and refine predict trajectory
+            locs_propose_pos[t] = self.to_loc_propose_pos(traj_query)
+            traj_query = traj_query.permute(0, 2, 1,
+                                            3).reshape(B * self.num_modes, N,
+                                                       -1)
         # traj_query = traj_query.reshape(B, N * self.num_modes, D)
-        loc_propose_pos = torch.cumsum(
-            loc_propose_pos.reshape(-1, self.num_modes, self.future_steps, 2),
-            dim=-2,
-        )
+        loc_propose_pos = torch.cumsum(torch.cat(locs_propose_pos,
+                                                 dim=-1).reshape(
+                                                     -1, self.num_modes,
+                                                     self.future_steps, 2),
+                                       dim=-2)
         if self.use_refine:
             traj_query = self.y_emb(loc_propose_pos.detach().reshape(
                 B * N * self.num_modes, self.future_steps,
@@ -271,6 +281,8 @@ class SceneDecoder(nn.Module):
                                                      1))[1].squeeze(0).reshape(
                                                          B, N * self.num_modes,
                                                          D)
+            traj_query = traj_query.reshape(B, N, self.num_modes, D).permute(
+                0, 2, 1, 3).reshape(B * self.num_modes, N, D)
             for i in range(0, len(self.cross_attender_refine), 2):
                 traj_query, x_scene_rel_pos = self.cross_attender_refine[i](
                     traj_query,
@@ -280,18 +292,18 @@ class SceneDecoder(nn.Module):
                     position_bias=x_scene_rel_pos,
                 )
 
-                traj_query = (traj_query.reshape(
-                    B, N, self.num_modes,
-                    D).permute(0, 2, 1, 3).reshape(B * self.num_modes, N, D))
+                # traj_query = (traj_query.reshape(
+                #     B, N, self.num_modes,
+                #     D).permute(0, 2, 1, 3).reshape(B * self.num_modes, N, D))
 
                 mask = (data["x_key_padding_mask"].unsqueeze(1).repeat(
                     1, self.num_modes, 1, 1).reshape(B * self.num_modes, N))
 
                 traj_query, x_rel_pos = self.cross_attender_refine[i + 1](
                     traj_query, key_padding_mask=mask, position_bias=x_rel_pos)
-                traj_query = (traj_query.reshape(
-                    B, self.num_modes, N,
-                    D).permute(0, 2, 1, 3).reshape(B, N * self.num_modes, D))
+
+            traj_query = (traj_query.reshape(B, self.num_modes, N,
+                                             D).permute(0, 2, 1, 3))
 
             traj_query = traj_query.reshape(B * N, self.num_modes, D)
             traj_query = traj_query[~agent_padding_mask]
@@ -299,7 +311,7 @@ class SceneDecoder(nn.Module):
             traj_query_tmp = torch.zeros(B * N,
                                          self.num_modes,
                                          D,
-                                         device=traj_query.device)
+                                         device=traj_query.device).to(traj_query.dtype)
             traj_query_tmp[~agent_padding_mask] = traj_query.clone()
             traj_query = traj_query_tmp.view(B, N, self.num_modes, D)
 
@@ -320,7 +332,8 @@ class SceneDecoder(nn.Module):
         # Scene scoring module using cross attention
         traj_query = (traj_query.reshape(B, N, self.num_modes, -1).permute(
             0, 2, 1, 3).reshape(B * self.num_modes, N, -1))
-        traj_mask = data["x_key_padding_mask"].unsqueeze(1).repeat(
+        # TODO: only use target agent mask with scored!!!
+        traj_mask = data["x_scored"].unsqueeze(1).repeat(
             1, self.num_modes, 1, 1).reshape(B * self.num_modes, N)
 
         scene_query = (self.scene_query.unsqueeze(0).unsqueeze(2).repeat(
