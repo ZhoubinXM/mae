@@ -320,7 +320,7 @@ class SceneDecoder(nn.Module):
         # Scene scoring module using cross attention
         traj_query = (traj_query.reshape(B, N, self.num_modes, -1).permute(
             0, 2, 1, 3).reshape(B * self.num_modes, N, -1))
-        traj_mask = data["x_key_padding_mask"].unsqueeze(1).repeat(
+        traj_mask = ~data["x_scored"].unsqueeze(1).repeat(
             1, self.num_modes, 1, 1).reshape(B * self.num_modes, N)
 
         scene_query = (self.scene_query.unsqueeze(0).unsqueeze(2).repeat(

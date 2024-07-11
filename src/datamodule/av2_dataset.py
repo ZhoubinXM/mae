@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import tqdm
 import av2.geometry.interpolate as interp_utils
 
-from .av2_extractor import Av2Extractor
+from av2_extractor import Av2Extractor
 
 
 class Av2Dataset(Dataset):

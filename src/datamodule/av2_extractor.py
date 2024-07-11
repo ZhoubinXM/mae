@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from av2.map.map_api import ArgoverseStaticMap, LaneSegment
 
-from .av2_data_utils import (
+from av2_data_utils import (
     OBJECT_TYPE_MAP,
     OBJECT_TYPE_MAP_COMBINED,
     LaneTypeMap,
