@@ -12,6 +12,7 @@ from src.utils.optim import WarmupCosLR
 from src.utils.submission_av2_multiagent import SubmissionAv2MultiAgent
 
 from src.model.multiagent.model_multiagent import ModelMultiAgent
+from src.model.layers.utils.transformer.multi_head_attention import MultiheadAttention
 
 
 class Trainer(pl.LightningModule):
@@ -97,7 +98,7 @@ class Trainer(pl.LightningModule):
         # TODO: only consider scored agents
         valid_mask = ~y_padding_mask
         # valid_mask[data["x_padding_mask"][
-            # ..., :49].any(-1) & ~x_scored] = False  # 将valid mask中当前帧元素为True的所有值变成False
+        # ..., :49].any(-1) & ~x_scored] = False  # 将valid mask中当前帧元素为True的所有值变成False
         valid_mask[~x_scored] = False  # [b,n,t]
         valid_mask = valid_mask.unsqueeze(2).float()  # [b,n,1,t]
 
@@ -144,8 +145,7 @@ class Trainer(pl.LightningModule):
         # cls_loss = F.cross_entropy(
         #     pi.view(-1, pi.size(-2))[reg_mask.all(-1).view(-1)],
         #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
-        cls_loss = F.cross_entropy(pi.squeeze(-1),
-                                   best_mode.detach())
+        cls_loss = F.cross_entropy(pi.squeeze(-1), best_mode.detach())
 
         loss = 0.45 * reg_loss + 0.1 * cls_loss + 0.45 * propose_reg_loss
         out = {
@@ -157,9 +157,91 @@ class Trainer(pl.LightningModule):
 
         return out
 
+    def cal_mtr_train_loss(self, outputs, data, tb_pre_tag=""):
+        pred_list = outputs[0]
+        intention_pts = outputs[1]
+        pred_dense_future_trajs = outputs[2]
+        num_layers = len(pred_list)
+        B, N, num_query, _ = intention_pts.shape
+        _, _, T, _ = pred_dense_future_trajs.shape
+
+        x_scored, y, y_padding_mask = (
+            data["x_scored"],
+            data["y"],
+            data["x_padding_mask"][..., 50:],
+        )
+
+        # TODO: only consider scored agents
+        valid_mask = ~y_padding_mask
+        valid_mask[~x_scored] = False  # [b,n,t]
+        y_t_valid_idx = valid_mask.sum(-1) - 1  # [B, N]
+        y_valid_mask = y_t_valid_idx > 0  # [B, N]
+        y_t_valid_idx = y_t_valid_idx[y_valid_mask]  # [num_valid]
+        y_valid = y[y_valid_mask]  # [num_valid, T, 2]
+        num_valid = y_valid.shape[0]
+        y_goal_valid = y_valid[torch.arange(num_valid),
+                               y_t_valid_idx]  # [num_valid, 2]
+        valid_mask = valid_mask[y_valid_mask]  # [num_valid, T]
+
+        dist = (y_goal_valid[:, None, :] - intention_pts[y_valid_mask]).norm(
+            dim=-1)  # [num_valid, num_query]
+        best_mode_idx = dist.argmin(dim=-1)  # [num_valid]
+
+        tb_dict = {}
+        disp_dict = {}
+        total_loss = 0
+        for layer_idx in range(num_layers):
+            # [B, N, num_query] / [B, N, num_query, T, 2]
+            pred_scores, pred_trajs = pred_list[layer_idx]
+
+            pred_trajs_valid = pred_trajs[
+                y_valid_mask]  # [num_valid, num_query, T, 2]
+            pred_scores_valid = pred_scores[
+                y_valid_mask]  # [num_valid, num_query]
+
+            pred_trajs_valid_best = pred_trajs_valid[torch.arange(
+                num_valid), best_mode_idx, :, :]  # [num_valid, T, 2]
+            reg_loss = F.smooth_l1_loss(pred_trajs_valid_best[valid_mask],
+                                        y_valid[valid_mask])
+
+            # cls_loss = F.cross_entropy(
+            #     pi.view(-1, pi.size(-2))[reg_mask.all(-1).view(-1)],
+            #     best_mode.view(-1)[reg_mask.all(-1).view(-1)].detach())
+            cls_loss = F.cross_entropy(pred_scores_valid,
+                                       best_mode_idx.detach())
+            weight_reg = 1
+            weight_cls = 1
+            layer_loss = weight_reg * reg_loss + weight_cls * cls_loss
+            layer_loss = layer_loss.mean()
+            total_loss += layer_loss
+            tb_dict[
+                f'{tb_pre_tag}loss_layer{layer_idx}_loss'] = layer_loss.item()
+            tb_dict[
+                f'{tb_pre_tag}loss_layer{layer_idx}_reg_loss'] = reg_loss.mean(
+                ).item() * weight_reg
+            tb_dict[
+                f'{tb_pre_tag}loss_layer{layer_idx}_cls_loss'] = cls_loss.mean(
+                ).item() * weight_cls
+
+        total_loss = total_loss / num_layers
+        pred_dense_future_trajs_valid = pred_dense_future_trajs[
+            y_valid_mask]  # [num_valid, T, 2]
+        dense_reg_loss = F.smooth_l1_loss(
+            pred_dense_future_trajs_valid[valid_mask], y_valid[valid_mask])
+        dense_reg_loss = dense_reg_loss.mean()
+        tb_dict[f'{tb_pre_tag}dense_loss'] = dense_reg_loss.item()
+
+        total_loss = total_loss + dense_reg_loss
+        tb_dict[f'loss'] = total_loss
+
+        return tb_dict
+
     def training_step(self, data, batch_idx):
         outputs = self(data)
-        res = self.cal_loss(outputs, data)
+        if isinstance(outputs, dict):
+            res = self.cal_loss(outputs, data)
+        else:
+            res = self.cal_mtr_train_loss(outputs, data, tb_pre_tag="train_")
 
         for k, v in res.items():
             if k.endswith("loss"):
@@ -170,14 +252,26 @@ class Trainer(pl.LightningModule):
                     on_epoch=True,
                     prog_bar=False,
                     sync_dist=True,
-                    batch_size=outputs["y_hat"].shape[0],
+                    batch_size=data["y"].shape[0],
                 )
 
         return res["loss"]
 
     def validation_step(self, data, batch_idx):
         outputs = self(data)
-        res = self.cal_loss(outputs, data)
+        if isinstance(outputs, dict):
+            res = self.cal_loss(outputs, data)
+        else:
+            res = self.cal_mtr_train_loss(outputs, data, tb_pre_tag="val_")
+            # reconstruct output
+            pred_list = outputs[0]
+            # [B, N, 6] / [B, N, 6, T, 2]
+            pred_scores, pred_trajs = self.net.scene_decoder.generate_final_prediction(
+                pred_list=pred_list)
+            temp = dict()
+            temp["y_hat"] = pred_trajs
+            temp["pi"] = pred_scores
+            outputs = temp
         theta = data["x_theta"].double()
         y_hat = outputs['y_hat']
         B, N, K, T, _ = y_hat.shape
@@ -269,6 +363,7 @@ class Trainer(pl.LightningModule):
             nn.LSTM,
             nn.GRU,
             nn.GRUCell,
+            MultiheadAttention,
         )
         blacklist_weight_modules = (
             nn.BatchNorm1d,

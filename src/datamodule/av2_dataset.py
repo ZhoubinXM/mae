@@ -6,8 +6,9 @@ from torch.utils.data import Dataset
 import torch.nn.functional as F
 import tqdm
 import av2.geometry.interpolate as interp_utils
+from src.model.layers.common_layers import calculate_relative_positions_angles
 
-from av2_extractor import Av2Extractor
+from .av2_extractor import Av2Extractor
 
 
 class Av2Dataset(Dataset):
@@ -101,12 +102,25 @@ def collate_fn(batch):
     data["origin"] = torch.cat([b["origin"] for b in batch], dim=0)
     data["theta"] = torch.cat([b["theta"] for b in batch])
 
+    # center and theta is on
     scene_ctrs = torch.cat([data["x_centers"], data["lane_centers"]], dim=1)
     x_vets = torch.stack([data["x_theta"].cos(), data["x_theta"].sin()],
                          dim=-1)
     lane_vets = torch.stack(
         [data["lane_angles"].cos(), data["lane_angles"].sin()], dim=-1)
     scene_vets = torch.cat([x_vets, lane_vets], dim=1)
+
+    scene_angles = torch.cat([data["x_theta"], data['lane_angles']], dim=1)
+    scene_relative_pose = calculate_relative_positions_angles(
+        scene_ctrs, scene_angles, scene_ctrs, scene_angles)
+    data["scene_relative_pose"] = scene_relative_pose
+    obj_relative_pose = calculate_relative_positions_angles(
+        data["x_centers"], data["x_theta"], data["x_centers"], data["x_theta"])
+    data["obj_relative_pose"] = obj_relative_pose
+    obj_map_relative_pose = calculate_relative_positions_angles(
+        data["x_centers"], data["x_theta"], data["lane_centers"],
+        data["lane_angles"])
+    data["obj_map_relative_pose"] = obj_map_relative_pose
 
     d_pos = (scene_ctrs.unsqueeze(1) - scene_ctrs.unsqueeze(2)).norm(dim=-1)
     d_pos = d_pos * 2 / 200  # scale [0, radius] to [0, 2]
@@ -417,3 +431,50 @@ def resample(data: dict, distance=5.0):
         lane_centers_padding_mask,
         lane_angles.squeeze(-1),
     )
+
+
+def calculate_relative_positions_angles(points1, angles1, points2, angles2):
+    """计算points2 相对于 points1的位置和角度
+       @input1: points1: [B, N, 2]
+       @input2: angles1: [B, N]
+       @input3: points2: [B, M, 2]
+       @input4: angles2: [B, M]
+
+       @return: point and angle diff: [B, N, M, 3]
+    """
+
+    B, N, _ = points1.size()
+    _, M, _ = points2.size()
+
+    # Expand angles to match the size of points
+    angles1_expanded = angles1
+    angles2_expanded = angles2
+
+    # Create rotation matrix for both sets of points
+    cos_matrix1 = angles1_expanded.cos()
+    sin_matrix1 = angles1_expanded.sin()
+    rotation_matrix1 = torch.stack(
+        [cos_matrix1, -sin_matrix1, sin_matrix1, cos_matrix1], dim=-1)
+    rotation_matrix1 = rotation_matrix1.view(B, N, 2, 2)
+
+    cos_matrix2 = angles2_expanded.cos()
+    sin_matrix2 = angles2_expanded.sin()
+    rotation_matrix2 = torch.stack(
+        [cos_matrix2, -sin_matrix2, sin_matrix2, cos_matrix2], dim=-1)
+    rotation_matrix2 = rotation_matrix2.view(B, M, 2, 2)
+
+    # Subtract the origin point from all points [B,N,M,2]
+    points_diff = points2.view(B, 1, M, 2) - points1.view(B, N, 1, 2)
+
+    # Apply rotation
+    rotated_points = torch.matmul(points_diff, rotation_matrix1)
+    # rotated_points = torch.einsum('bijk,bilk->bijl', points_diff, rotation_matrix1)
+    rotated_points = rotated_points
+
+    # Calculate relative angles
+    angles_diff = angles2.view(B, 1, M) - angles1.view(B, N, 1)
+
+    relative_pose = torch.cat(
+        [rotated_points, angles_diff.unsqueeze(-1)], dim=-1)
+
+    return relative_pose

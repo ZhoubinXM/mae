@@ -2,6 +2,8 @@ import torch
 from torch import nn
 from src.model.layers.fourier_embedding import FourierEmbedding
 from src.model.layers.transformer_blocks import Block, MLPLayer
+from src.model.layers.utils.transformer.transformer_encoder_layer import TransformerEncoderLayer
+from src.model.layers.utils.transformer.position_encoding_utils import gen_sineembed_for_position, gen_relative_input
 
 from src.utils.weight_init import weight_init
 
@@ -51,33 +53,6 @@ class SceneEncoder(nn.Module):
         scene_padding_mask = torch.cat(
             [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
 
-        # x_positions = data["x_positions"][:, :, 49]  # [B, N, 2]
-        # x_angles = data["x_angles"][:, :, 49]  # [B, N]
-        # # x_angles = torch.stack(
-        # #     [torch.cos(x_angles), torch.sin(x_angles)], dim=-1)
-        # x_angles = x_angles.unsqueeze(-1)
-        # x_pos_feat = torch.cat([x_positions, x_angles], dim=-1)  # [B, N, 4]
-        # lane_centers = data["lane_positions"][:, :, 0].to(torch.float32)
-        # lane_angles = torch.atan2(
-        #     data["lane_positions"][..., -1, 1] -
-        #     data["lane_positions"][..., 0, 1],
-        #     data["lane_positions"][..., -1, 0] -
-        #     data["lane_positions"][..., 0, 0],
-        # ).unsqueeze(-1)
-        # # lane_angles = torch.stack(
-        # #     [torch.cos(lane_angles),
-        # #      torch.sin(lane_angles)], dim=-1)
-        # lane_pos_feat = torch.cat([lane_centers, lane_angles], dim=-1)
-        # pos_feat = torch.cat([x_pos_feat, lane_pos_feat], dim=1)
-        # x1 = pos_feat[..., :2].unsqueeze(2).repeat(1, 1, pos_feat.size(1), 1)
-        # x2 = pos_feat[..., :2].unsqueeze(1)
-        # x = x1 - x2
-        # dist = torch.sqrt(((x1 - x2)**2).sum(-1))  # [B, N, N)]
-        # angle1 = pos_feat[..., 2].unsqueeze(2).repeat(1, 1, pos_feat.size(1))
-        # angle2 = pos_feat[..., 2].unsqueeze(1)
-        # angle_diff = angle1 - angle2
-        # rel_pos = torch.stack([dist, angle_diff], dim=-1)
-        # rel_pos = torch.cat([x, rel_pos], dim=-1)
         rel_pos = data["rpe"]
         rel_pos = self.pos_embed(rel_pos)  # [B, N, N]
 
@@ -86,6 +61,65 @@ class SceneEncoder(nn.Module):
                                       key_padding_mask=scene_padding_mask,
                                       position_bias=rel_pos)
 
-        # scene_feat = self.scene_norm(scene_feat)
-
         return scene_feat, rel_pos
+
+
+class SceneMTREncoder(nn.Module):
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        embedding_type: str,
+        num_head: int,
+        dropout: float,
+        act_layer: nn.Module,
+        norm_layer: nn.Module,
+        post_norm: bool,
+        attn_bias: bool,
+        ffn_bias: bool,
+        spa_depth: int,
+    ) -> None:
+        super().__init__()
+
+        self.spa_net = nn.ModuleList(
+            TransformerEncoderLayer(
+                d_model=hidden_dim,
+                nhead=num_head,
+                dim_feedforward=hidden_dim * 4,
+                dropout=dropout,
+                normalize_before=False,
+            ) for _ in range(spa_depth))
+
+        self.pos_embed = nn.Linear(2 * hidden_dim, hidden_dim)
+
+        self.apply(weight_init)
+
+    def forward(self, data: dict, agent_feat: torch.Tensor,
+                lane_feat: torch.Tensor):
+        B, N, D = agent_feat.shape
+        _, M, _ = lane_feat.shape
+
+        scene_feat = torch.cat([agent_feat, lane_feat], dim=1)
+        scene_padding_mask = torch.cat(
+            [data["x_key_padding_mask"], data["lane_key_padding_mask"]], dim=1)
+
+        _, A = scene_padding_mask.shape
+        assert A == N + M
+
+        scene_relative_pose = data["scene_relative_pose"].reshape(
+            B * A, A, 3)  # [B*A, A, 3]
+
+        scene_feat = scene_feat.reshape(B, A, D)
+
+        scene_rel_padding_mask, scene_relative_pose_embed, self_pos_embed = gen_relative_input(
+            scene_relative_pose=scene_relative_pose,
+            scene_padding_mask=scene_padding_mask,
+            pos_embed=self.pos_embed,
+            hidden_dim=D)
+
+        for blk in self.spa_net:
+            scene_feat = blk(src=scene_feat,
+                             src_key_padding_mask=scene_rel_padding_mask,
+                             pos=[self_pos_embed, scene_relative_pose_embed])
+
+        return [scene_feat[:, :N], scene_feat[:, N:]], _

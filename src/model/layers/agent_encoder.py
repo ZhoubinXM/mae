@@ -4,6 +4,7 @@ from src.model.layers.fourier_embedding import FourierEmbedding
 from src.model.layers.transformer_blocks import Block, MLPLayer
 
 from src.utils.weight_init import weight_init
+from src.model.layers.common_layers import build_mlps
 
 
 class AgentEncoder(nn.Module):
@@ -67,7 +68,8 @@ class AgentEncoder(nn.Module):
     def forward(self, data: dict):
         agent_hist_padding_mask = data["x_padding_mask"][:, :, :50]
         agent_padding_mask = data["x_key_padding_mask"]
-        agent_hist_angles = data['x_angles'][:, :, :50].contiguous() # instance frame
+        agent_hist_angles = data['x_angles'][:, :, :50].contiguous(
+        )  # instance frame
         # agent_hist_angles_vec = torch.stack(
         #     [agent_hist_angles.cos(),
         #      agent_hist_angles.sin()], dim=-1)
@@ -109,7 +111,8 @@ class AgentEncoder(nn.Module):
         agent_tempo_query = self.agent_tempo_query[None, :, :].repeat(
             agent_feat.shape[0], 1, 1)
         agent_feat = torch.cat([agent_feat, agent_tempo_query], dim=1)
-        agent_hist_padding_mask = torch.cat([agent_hist_padding_mask,
+        agent_hist_padding_mask = torch.cat([
+            agent_hist_padding_mask,
             torch.zeros([B * N, 1]).to(agent_hist_padding_mask.dtype).to(
                 agent_hist_padding_mask.device)
         ],
@@ -146,3 +149,88 @@ class AgentEncoder(nn.Module):
         # agent_feat = agent_feat.reshape(B, N, -1)
 
         return agent_feat
+
+
+class AgentPointNetEncoder(nn.Module):
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        embedding_type: str,
+        num_head: int,
+        dropout: float,
+        act_layer: nn.Module,
+        norm_layer: nn.Module,
+        post_norm: bool,
+        attn_bias: bool,
+        ffn_bias: bool,
+        tempo_depth: int,
+    ) -> None:
+        super().__init__()
+
+        input_dim = 6
+
+        self.pre_mlps = build_mlps(c_in=input_dim,
+                                   mlp_channels=[hidden_dim] * 1,
+                                   ret_before_act=False)
+        self.mlps = build_mlps(c_in=hidden_dim * 2,
+                               mlp_channels=[hidden_dim] * 3,
+                               ret_before_act=False)
+
+        self.out_mlps = build_mlps(c_in=hidden_dim,
+                                   mlp_channels=[hidden_dim, hidden_dim],
+                                   ret_before_act=True,
+                                   without_norm=True)
+
+        self.apply(weight_init)
+
+    def forward(self, data: dict):
+        # TODO: feat encoder use vectornet encoding method
+        agent_hist_padding_mask = data["x_padding_mask"][:, :, :
+                                                         50]  # [B, N, T]
+        agent_padding_mask = data["x_key_padding_mask"]  # valid mask [B, N]
+        agent_hist_angles = data['x_angles'][:, :, :50].contiguous(
+        )  # instance frame
+        agent_hist_diff_vec = data['x']
+        agent_hist_vel_diff = data['x_velocity_diff']
+        agent_attr = data['x_attr'][..., -1][:, :, None,
+                                             None].repeat(1, 1, 50, 1)
+
+        agent: torch.Tensor = torch.cat([
+            agent_hist_diff_vec,
+            agent_hist_angles.unsqueeze(-1),
+            agent_hist_vel_diff.unsqueeze(-1), agent_attr,
+            agent_hist_padding_mask.unsqueeze(-1)
+        ],
+                                        dim=-1)
+
+        B, N, T, C = agent.shape
+        # pre-mlp
+        agent_feat_valid = self.pre_mlps(agent[~agent_hist_padding_mask])
+        agent_feature = agent.new_zeros(B, N, T, agent_feat_valid.shape[-1])
+        agent_feature[~agent_hist_padding_mask] = agent_feat_valid
+
+        # max_pooling 1: after pre mlp, get global feature
+        pooled_feature = agent_feature.max(dim=2)[0]  # [B, N, D]
+        agent_feature = torch.cat(
+            [agent_feature, pooled_feature[:, :, None, :].repeat(1, 1, T, 1)],
+            dim=-1)
+
+        # mlp
+        agent_feat_valid = self.mlps(agent_feature[~agent_hist_padding_mask])
+        feature_buffers = agent_feature.new_zeros(B, N, T,
+                                                  agent_feat_valid.shape[-1])
+        feature_buffers[~agent_hist_padding_mask] = agent_feat_valid
+
+        # max-pooling 2: after mlp
+        feature_buffers = feature_buffers.max(
+            dim=2)[0]  # (batch_size, num_polylines, C)
+
+        # out-mlp
+        feature_buffers_valid = self.out_mlps(
+            feature_buffers[~agent_padding_mask])  # (N, C)
+        feature_buffers = feature_buffers.new_zeros(
+            B, N, feature_buffers_valid.shape[-1])
+        feature_buffers[~agent_padding_mask] = feature_buffers_valid
+
+        return feature_buffers  # [B, N, D]

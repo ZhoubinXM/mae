@@ -6,13 +6,13 @@ import psutil
 import ray
 from scipy.spatial.distance import cdist
 
-
 # Initialize device:
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Initialize ray:
 num_cpus = psutil.cpu_count(logical=False)
 ray.init(num_cpus=num_cpus, log_to_driver=False)
+
 
 def k_means_endpoints(k, ds: SingleAgentDataset):
     """
@@ -21,7 +21,8 @@ def k_means_endpoints(k, ds: SingleAgentDataset):
     ds_size = len(ds)
     endpoints = np.zeros((ds_size, 2))  # 2 for x and y coordinates
     for i, data in enumerate(ds):
-        endpoints[i] = data['ground_truth']['traj'][-1]  # get the last point of each trajectory
+        endpoints[i] = data['ground_truth']['traj'][
+            -1]  # get the last point of each trajectory
     clustering = KMeans(n_clusters=k, verbose=1).fit(endpoints)
     anchors = np.zeros((k, 2))
     for i in range(k):
@@ -31,6 +32,7 @@ def k_means_endpoints(k, ds: SingleAgentDataset):
     print("Endpoint anchors saved~~")
     anchors = torch.from_numpy(anchors).float().to(device)
     return anchors
+
 
 def k_means_anchors(k, ds: SingleAgentDataset):
     """
@@ -43,7 +45,8 @@ def k_means_anchors(k, ds: SingleAgentDataset):
     trajectories = np.zeros((ds_size, traj_len, traj_dim))
     for i, data in enumerate(ds):
         trajectories[i] = data['ground_truth']['traj']
-    clustering = KMeans(n_clusters=k, verbose=1).fit(trajectories.reshape((ds_size, -1)))
+    clustering = KMeans(n_clusters=k,
+                        verbose=1).fit(trajectories.reshape((ds_size, -1)))
     anchors = np.zeros((k, traj_len, traj_dim))
     for i in range(k):
         anchors[i] = np.mean(trajectories[clustering.labels_ == i], axis=0)
@@ -87,7 +90,8 @@ def ward_merge_dist(cluster_cnts, cluster_ctrs):
     n1 = cluster_cnts.reshape(1, -1).repeat(len(cluster_cnts), axis=0)
     n2 = n1.transpose()
     wts = n1 * n2 / (n1 + n2)
-    ward_dists = wts * centroid_dists + np.diag(np.inf * np.ones(len(cluster_cnts)))
+    ward_dists = wts * centroid_dists + np.diag(
+        np.inf * np.ones(len(cluster_cnts)))
 
     return ward_dists
 
@@ -150,22 +154,87 @@ def cluster_traj(k: int, traj: torch.Tensor):
     data = data.reshape(batch_size, num_samples, -1).detach().cpu().numpy()
 
     # Initialize clustering objects
-    cluster_objs = [KMeans(n_clusters=k, n_init=1, max_iter=100, init='random') for _ in range(batch_size)]
+    cluster_objs = [
+        KMeans(n_clusters=k, n_init=1, max_iter=100, init='random')
+        for _ in range(batch_size)
+    ]
 
     # Get clustering outputs using ray.remote
-    cluster_ops = ray.get([cluster.remote(cluster_objs[i], data[i]) for i in range(batch_size)])
+    cluster_ops = ray.get(
+        [cluster.remote(cluster_objs[i], data[i]) for i in range(batch_size)])
     cluster_lbls = [cluster_op.labels_ for cluster_op in cluster_ops]
-    cluster_counts = [np.unique(cluster_ops[i].labels_.copy(), return_counts=True)[1] for i in range(batch_size)]
-    cluster_ranks = [rank_clusters(cluster_counts[i], cluster_ops[i].cluster_centers_.copy())
-                     for i in range(batch_size)]
+    cluster_counts = [
+        np.unique(cluster_ops[i].labels_.copy(), return_counts=True)[1]
+        for i in range(batch_size)
+    ]
+    cluster_ranks = [
+        rank_clusters(cluster_counts[i],
+                      cluster_ops[i].cluster_centers_.copy())
+        for i in range(batch_size)
+    ]
 
     # Compute mean (clustered) traj and scores
     for batch_idx, traj_samples in enumerate(traj):
         for n in range(k):
             idcs = np.where(cluster_lbls[batch_idx] == n)[0]
-            traj_clustered[batch_idx, n] = torch.mean(traj_samples[idcs], dim=0)
+            traj_clustered[batch_idx, n] = torch.mean(traj_samples[idcs],
+                                                      dim=0)
 
-        scores[batch_idx] = 1 / torch.from_numpy(cluster_ranks[batch_idx]).to(device)
+        scores[batch_idx] = 1 / torch.from_numpy(
+            cluster_ranks[batch_idx]).to(device)
         scores[batch_idx] = scores[batch_idx] / torch.sum(scores[batch_idx])
 
     return traj_clustered, scores
+
+
+def cluster_traj_endpoints(k: int, traj: torch.Tensor):
+    """
+    Clusters the endpoints of sampled trajectories to output K modes.
+    :param k: number of clusters
+    :param traj: set of sampled trajectories, shape [batch_size, num_samples, traj_len, 2]
+    :return: endpoints_clustered:  set of clustered endpoints, shape [batch_size, k, 2]
+             scores: scores for clustered endpoints (basically 1/rank), shape [batch_size, k]
+    """
+
+    # Initialize output tensors
+    batch_size = traj.shape[0]
+    num_samples = traj.shape[1]
+    endpoints_clustered = torch.zeros(batch_size, k, 2).to(device)
+    scores = torch.zeros(batch_size, k).to(device)
+
+    # Extract endpoints of traj
+    data = traj[:, :, -1, :]
+    data = data.reshape(batch_size, num_samples, -1).detach().cpu().numpy()
+
+    # Initialize clustering objects
+    cluster_objs = [
+        KMeans(n_clusters=k, n_init=1, max_iter=100, init='random')
+        for _ in range(batch_size)
+    ]
+
+    # Get clustering outputs using ray.remote
+    cluster_ops = ray.get(
+        [cluster.remote(cluster_objs[i], data[i]) for i in range(batch_size)])
+    cluster_lbls = [cluster_op.labels_ for cluster_op in cluster_ops]
+    cluster_counts = [
+        np.unique(cluster_ops[i].labels_.copy(), return_counts=True)[1]
+        for i in range(batch_size)
+    ]
+    cluster_ranks = [
+        rank_clusters(cluster_counts[i],
+                      cluster_ops[i].cluster_centers_.copy())
+        for i in range(batch_size)
+    ]
+
+    # Compute mean (clustered) endpoints and scores
+    for batch_idx, endpoint_samples in enumerate(traj[:, :, -1, :]):
+        for n in range(k):
+            idcs = np.where(cluster_lbls[batch_idx] == n)[0]
+            endpoints_clustered[batch_idx,
+                                n] = torch.mean(endpoint_samples[idcs], dim=0)
+
+        scores[batch_idx] = 1 / torch.from_numpy(
+            cluster_ranks[batch_idx]).to(device)
+        scores[batch_idx] = scores[batch_idx] / torch.sum(scores[batch_idx])
+
+    return endpoints_clustered, scores

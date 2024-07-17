@@ -5,10 +5,10 @@ import torch.nn as nn
 from ..layers.transformer_blocks import Block, CrossAttenderBlock
 from torch_scatter import scatter_mean
 from ..layers.multimodal_decoder import MultiAgentDecoder, MultiAgentProposeDecoder
-from src.model.layers.agent_encoder import AgentEncoder
-from src.model.layers.lane_encoder import LaneEncoder
-from src.model.layers.scene_encoder import SceneEncoder
-from src.model.layers.scene_decoder import SceneDecoder, SceneSimplDecoder
+from src.model.layers.agent_encoder import AgentEncoder, AgentPointNetEncoder
+from src.model.layers.lane_encoder import LaneEncoder, LanePointNetEncoder
+from src.model.layers.scene_encoder import SceneEncoder, SceneMTREncoder
+from src.model.layers.scene_decoder import SceneDecoder, SceneSimplDecoder, SceneMTRDecoder
 
 
 class ModelMultiAgent(nn.Module):
@@ -38,7 +38,7 @@ class ModelMultiAgent(nn.Module):
         self.use_cls_token = use_cls_token
 
         # Agent Encoder
-        self.agent_encoder = AgentEncoder(
+        self.agent_encoder = AgentPointNetEncoder(
             hidden_dim=embed_dim,
             embedding_type=embedding_type,
             num_head=num_heads,
@@ -52,7 +52,7 @@ class ModelMultiAgent(nn.Module):
         )
 
         # Lane Encoder
-        self.lane_encoder = LaneEncoder(
+        self.lane_encoder = LanePointNetEncoder(
             hidden_dim=embed_dim,
             embedding_type=embedding_type,
             num_head=num_heads,
@@ -66,21 +66,21 @@ class ModelMultiAgent(nn.Module):
         )
 
         # Scene Encoder
-        self.scene_encoder = SceneEncoder(
+        self.scene_encoder = SceneMTREncoder(
             hidden_dim=embed_dim,
             embedding_type=embedding_type,
             num_head=num_heads,
             dropout=dropout,
             act_layer=act_layer,
             norm_layer=norm_layer,
-            post_norm=False,
+            post_norm=True,
             attn_bias=attn_bias,
             ffn_bias=ffn_bias,
             spa_depth=spa_depth,
         )
 
         # Scene Decoder
-        self.scene_decoder = SceneDecoder(
+        self.scene_decoder = SceneMTRDecoder(
             hidden_dim=embed_dim,
             embedding_type=embedding_type,
             num_head=num_heads,
